@@ -1,0 +1,89 @@
+# Workflows
+
+## Write a character spec
+
+Specs are TOML in `specs/`. Any value can be a fixed value, a `[min, max]` range, or
+`{ choice = [...] }`; the seed resolves ranges and choices. Start from
+[specs/default.toml](../specs/default.toml) (everything random) or
+[specs/school_navy.toml](../specs/school_navy.toml) (fixed look).
+
+```toml
+version = 1
+seed = 1                 # default seed; --seed overrides
+base = "base_f01"        # assets/base/<base>.vrm
+
+[body]                   # multipliers around 1.0 (ranges: wogen/body.py BODY_RANGES)
+leg_length = [1.0, 1.06] # head_scale leg_length arm_length torso_length neck_length
+bust = [0.9, 1.15]       # shoulder_width hip_width waist thigh arm_thickness bust
+
+[face]                   # -1 .. 1
+eye_size = [0.2, 0.6]    # eye_size eye_height face_width chin_length
+
+[colors]                 # "#RRGGBB"; hair/eyes colorize, skin tints (keep it near white)
+hair = { choice = ["#1d1b26", "#f4b6c2"] }
+eyes = "#5ab0ff"
+
+[outfit]
+set = "school"                             # tennis | sweets | school | red_dress | pink_capelet
+add = ["bow_pink"]                         # extra garments
+tint = { skirt_plaid = "#4a5a9a", "tennis_set_white:CLOTH_01" = "#c03050" }  # :LAYER = one layer
+```
+
+Values are clamped to their ranges and the adult rule may reduce `head_scale`. The reasons
+appear as `[generate]` notes. `uv run wogen resolve specs/x.toml --seed 3` shows the resolved
+values without Blender.
+
+## Add garments to the library
+
+1. In VroidStudio, open the **same body** (don't change body sliders) and dress it in new
+   items. Shoes may differ; heel height is handled.
+2. Export VRM 1.0 with **no reductions** to `assets/base/base_f01_<anything>.vrm`.
+3. `uv run wogen harvest`. New garments are saved; duplicates are skipped. An export whose
+   skeleton differs beyond a vertical shift is skipped with a reason.
+4. `uv run wogen outfit-sheet` and review. The new outfit set is named after the export file.
+5. Give garments descriptive names and correct slots from chat:
+   ```python
+   outfit.rename({"tops_003_01": ("hoodie_grey", "outer")}, {"base_f01_outfit6": "street"})
+   ```
+   Renames live in `assets/garments/index.json` and are re-applied by every harvest
+   (including `--fresh`, which rebuilds the library contents from the exports).
+
+Use `render.garment_sheet()` to see each garment alone, and `outfit.list_layers(name)` with
+`render.layer_sheet(name)` to find which texture layer is which part.
+
+## Poses
+
+- Library poses: `wogen/poses.py` (`POSES`). For the axis conventions, see the module
+  docstring.
+- Make a custom pose in chat or by hand in Blender's pose mode, then `pose.save_pose("name")`.
+  It's written to `assets/poses/name.toml` and is usable by name everywhere (`--pose name`).
+- Combine: `pose.apply_pose(["idle", "hand:peace:right"])`, or tweak with
+  `apply_pose({...}, reset=False)`.
+
+## Clips
+
+`anim.sequence([(frame, pose, expression[, {"ground": False}]), ...])`, then `physics.bake()`
+and `render.clip(path)`. The CLI `clip` command uses `anim.PRESETS`; add new presets there.
+
+## Export a character
+
+- CLI: `uv run wogen generate --seed 7 --export out\c.vrm --export out\c.fbx`.
+- Chat: `export.export_character(r"...\out\c.vrm")`. It exports a copy, so the scene is
+  untouched.
+- VRM (1.0) is for VRM-capable apps and viewers: MToon look, expressions, hair + skirt spring
+  bones. ⚠ Some VTubing apps only read VRM 0.x; check the app, or convert. FBX is for
+  engines: Principled materials with embedded textures, a T-pose rest, and the VroidStudio
+  bone names.
+- The baked-in result: face sliders, palette and garment tints, worn garments only, and
+  hidden skin removed.
+
+## Update the MCP server/add-on
+
+`.\scripts\update-blender-mcp.ps1` pins the newest `mcp-for-blender` release (no-op if current);
+then restart Blender and Claude Code. See [tooling.md](tooling.md).
+
+## Run tests
+
+`uv run pytest` runs everything (94 tests, about 50 s). The 3 `blender`-marked tests launch
+headless Blender (render test, portrait job, clip job). `uv run pytest -m "not blender"` runs
+the 91 pure tests in under a second.

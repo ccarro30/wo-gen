@@ -1,0 +1,11 @@
+# Normalize line endings for text files
+* text=auto
+
+# Binary assets in Git LFS
+*.vrm   filter=lfs diff=lfs merge=lfs -text
+*.vroid filter=lfs diff=lfs merge=lfs -text
+*.blend filter=lfs diff=lfs merge=lfs -text
+*.fbx   filter=lfs diff=lfs merge=lfs -text
+*.png   filter=lfs diff=lfs merge=lfs -text
+*.jpg   filter=lfs diff=lfs merge=lfs -text
+*.mp4   filter=lfs diff=lfs merge=lfs -text

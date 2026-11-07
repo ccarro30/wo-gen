@@ -1,0 +1,95 @@
+{
+  "renames": {
+    "bottoms_001_03": "skirt_plaid",
+    "onepiece_010_01": "tennis_set_white",
+    "onepiece_010_01_outfit2": "decals_sweets",
+    "onepiece_010_01_outfit4": "lace_collar_black",
+    "shoes_001_01": "loafers_brown",
+    "shoes_008_01": "sneakers_white",
+    "shoes_008_01_outfit2": "sneakers_pink",
+    "shoes_008_01_outfit4": "heels_red",
+    "shoes_008_01_outfit5": "platforms_pink",
+    "tops_002_01": "dress_red",
+    "tops_002_03": "dress_sweets_pink",
+    "tops_002_03_outfit5": "skirt_pink_floral",
+    "tops_007_01": "bow_pink",
+    "tops_007_01_outfit3": "cardigan_white",
+    "tops_007_01_outfit4": "rose_brooch_red",
+    "tops_007_01_outfit5": "capelet_pink",
+    "tops_007_02": "blouse_white"
+  },
+  "set_renames": {
+    "base_f01": "tennis",
+    "base_f01_outfit2": "sweets",
+    "base_f01_outfit3": "school",
+    "base_f01_outfit4": "red_dress",
+    "base_f01_outfit5": "pink_capelet"
+  },
+  "sets": {
+    "pink_capelet": [
+      "capelet_pink",
+      "skirt_pink_floral",
+      "platforms_pink"
+    ],
+    "red_dress": [
+      "dress_red",
+      "lace_collar_black",
+      "rose_brooch_red",
+      "heels_red"
+    ],
+    "school": [
+      "blouse_white",
+      "cardigan_white",
+      "skirt_plaid",
+      "loafers_brown"
+    ],
+    "sweets": [
+      "dress_sweets_pink",
+      "bow_pink",
+      "sneakers_pink",
+      "decals_sweets"
+    ],
+    "tennis": [
+      "tennis_set_white",
+      "sneakers_white"
+    ]
+  },
+  "signatures": {
+    "blouse_white": "3f2b53c3bebb36cd",
+    "bow_pink": "4165a8ace2f72f62",
+    "capelet_pink": "3c4db8a673c513d1",
+    "cardigan_white": "95b220a6a0af764d",
+    "decals_sweets": "39c08a878946d9f5",
+    "dress_red": "1bd3d68ec983f5c3",
+    "dress_sweets_pink": "73700e948b8174f4",
+    "heels_red": "36e0a0543f44739c",
+    "lace_collar_black": "27504a548b3d5d83",
+    "loafers_brown": "95ef59a1a4d93157",
+    "platforms_pink": "05b2dfaa7d885fb2",
+    "rose_brooch_red": "553c1acfff9aafb9",
+    "skirt_pink_floral": "7af19002c32c1ff1",
+    "skirt_plaid": "93adccea432af68d",
+    "sneakers_pink": "6f961c41c47d2601",
+    "sneakers_white": "2d02d87cc9ba59fa",
+    "tennis_set_white": "da58f947b02cb82c"
+  },
+  "slots": {
+    "blouse_white": "top",
+    "bow_pink": "accessory",
+    "capelet_pink": "top",
+    "cardigan_white": "outer",
+    "decals_sweets": "accessory",
+    "dress_red": "full",
+    "dress_sweets_pink": "full",
+    "heels_red": "shoes",
+    "lace_collar_black": "accessory",
+    "loafers_brown": "shoes",
+    "platforms_pink": "shoes",
+    "rose_brooch_red": "accessory",
+    "skirt_pink_floral": "bottom",
+    "skirt_plaid": "bottom",
+    "sneakers_pink": "shoes",
+    "sneakers_white": "shoes",
+    "tennis_set_white": "full"
+  }
+}

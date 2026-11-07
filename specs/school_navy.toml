@@ -1,0 +1,20 @@
+# Example: fixed look with mix-and-match garments and tints (body/face still vary per seed).
+version = 1
+seed = 11
+base = "base_f01"
+
+[body]
+leg_length = [1.0, 1.06]
+bust = [0.95, 1.1]
+
+[face]
+eye_size = [0.2, 0.6]
+
+[colors]
+hair = "#1d1b26"
+eyes = "#5ab0ff"
+
+[outfit]
+set = "school"
+add = ["bow_pink"]
+tint = { skirt_plaid = "#4a5a9a", cardigan_white = "#f2d6e0" }

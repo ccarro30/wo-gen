@@ -1,0 +1,31 @@
+[project]
+name = "wogen"
+version = "0.1.0"
+description = "Generator for stylized 3D anime characters in Blender"
+readme = "README.md"
+# Blender 5.2 bundles Python 3.13; code under blender/modules/wogen must stay 3.13-compatible.
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+wogen = "wogen.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.8,<1"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+# The package lives where Blender auto-adds it to sys.path (<script dir>/modules),
+# so the same code is importable from the CLI, headless Blender and the live GUI (MCP).
+module-root = "blender/modules"
+module-name = "wogen"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["blender: needs a Blender executable (slow)"]
+
+[dependency-groups]
+dev = [
+    "fake-bpy-module>=20261031",
+    "pytest>=9.2.0",
+]

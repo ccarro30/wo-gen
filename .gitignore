@@ -1,0 +1,29 @@
+# Python / uv
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Generated
+out/
+.cache/
+
+# Third-party reference images (copyrighted; style reference only)
+references/
+
+# Blender autosave/backup
+*.blend1
+*.blend2
+*.blend@
+
+# Python tooling
+*.egg-info/
+.ruff_cache/
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Personal Claude Code settings
+.claude/settings.local.json

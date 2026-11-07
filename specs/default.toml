@@ -1,0 +1,36 @@
+# Default character spec. Ranges [min, max] and { choice = [...] } are resolved per seed
+# (wogen/spec.py); body values are multipliers around 1.0, face values -1..1.
+# Everything is clamped to the allowed ranges and the adult-proportion rule (wogen/body.py).
+version = 1
+seed = 1
+base = "base_f01"
+
+[body]
+head_scale = [0.95, 1.04]
+leg_length = [0.97, 1.08]
+arm_length = [0.98, 1.03]
+torso_length = [0.97, 1.04]
+neck_length = [0.95, 1.10]
+shoulder_width = [0.96, 1.04]
+hip_width = [0.96, 1.08]
+waist = [0.92, 1.03]
+thigh = [0.94, 1.08]
+arm_thickness = [0.94, 1.05]
+bust = [0.85, 1.25]
+
+[face]
+eye_size = [-0.4, 0.8]
+eye_height = [-0.5, 0.5]
+face_width = [-0.6, 0.4]
+chin_length = [-0.5, 0.5]
+
+[colors]
+hair = { choice = ["#3b2a2a", "#1d1b26", "#f4b6c2", "#ff6a4d", "#e8e4f2", "#2f4f9a", "#c9a46b", "#9b6bd6"] }
+eyes = { choice = ["#c0392b", "#5ab0ff", "#3fbf7f", "#e0a23a", "#a05ad8", "#8a5a3c"] }
+skin = { choice = ["#ffffff", "#fff4ee", "#f6e2d6"] }
+
+[outfit]
+# Outfit sets (see assets/garments/index.json). Optional:
+#   add  = ["cardigan_white"]                        extra garments on top of the set
+#   tint = { skirt_plaid = "#3a4a7a", "tennis_set_white:CLOTH_01" = "#c03050" }   (":LAYER" = one layer)
+set = { choice = ["tennis", "sweets", "school", "red_dress", "pink_capelet"] }
