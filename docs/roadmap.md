@@ -1,13 +1,13 @@
 # Roadmap
 
-Status as of 2026-11-07. 94 tests pass.
+Status as of 2026-11-07. 106 tests pass.
 
 | Phase | Goal | Status |
 |---|---|---|
-| **0. Setup** | Blender, MCP, repo skeleton, headless render | ✅ Done |
+| **0. Setup** | Blender, MCP, repo, version control, headless render | ✅ Done |
 | **1. One good character** | Toon look, outlines, expressions, turntable | ✅ Done, except proper face shadows |
 | **2. Parameterization** | Spec + seed → body/face/palette variants, adult rule | ✅ Done (11 body + 4 face params) |
-| **3. Modules** | Garments and hairstyles, fitted to any body | 🟡 Garments done (17); **hairstyles not started** |
+| **3. Modules** | Garments and hairstyles, fitted to any body | ✅ Done (17 garments, 8 hairstyles) |
 | **4. Physics** | Hair, skirt and soft-tissue secondary motion | ✅ Spring bones done; no cloth sim |
 | **5. Poses and stills** | Pose/expression library, presets, one-command portrait | ✅ Done (14 poses, 22 expressions) |
 | **6. Animation and video** | Motion library, mocap retarget, MP4 | 🟡 Keyed presets + MP4; no walk cycle or mocap |
@@ -17,6 +17,7 @@ Status as of 2026-11-07. 94 tests pass.
 ## Done, by phase
 
 **0. Setup.**
+- Git with binaries in Git LFS (`.gitattributes`), pushed to GitHub.
 - Blender 5.2.3 LTS, the VRM add-on and MCP for Blender 2.2.7 (pinned, with an update
   script).
 - `uv` project with pytest and fake-bpy-module.
@@ -36,7 +37,8 @@ Status as of 2026-11-07. 94 tests pass.
 - Procedural face keys.
 - Palette colorize (hair, irises, brows) and skin tint.
 - Adult rule: ≥ 6.6 heads, with `head_scale` clamped in closed form; tested across 40 seeds.
-- `generate`/`variants` commands; about 13 s per character.
+- `generate`/`variants` commands; about 14 s per character, flat across long batches (each
+  regeneration frees the previous character's data).
 
 **3. Garments.**
 - Split VroidStudio's merged body into garments (alpha-pruned shells) with an exact
@@ -45,6 +47,8 @@ Status as of 2026-11-07. 94 tests pass.
 - Garment rigs (skirt bones, springs, colliders).
 - Fitting to generated bodies.
 - Outfit sets, mix-and-match, per-layer recolor, descriptive names and slots.
+- Hairstyle library (8 styles): hair meshes, HairBack cap and hair spring chains as swappable
+  modules that replace the base hair; spec `[hair] style`, `--hair`, `hair-sheet`.
 
 **4. Physics.**
 - Our own VRM SpringBone 1.0 solver, baked to keys.
@@ -57,7 +61,7 @@ Status as of 2026-11-07. 94 tests pass.
   lift.
 - Hand shapes, automatic mirroring.
 - Save/load round trip (< 0.1 mm).
-- Props (seat), camera yaw.
+- Props (outlined seat), camera yaw.
 
 **6. Motion.**
 - Keyed sequences (`look_around`, `hop`, `wave_hello`) with expressions.
@@ -65,7 +69,7 @@ Status as of 2026-11-07. 94 tests pass.
 - MP4 clips and turntables.
 
 **Export.**
-- Done on a copy of the scene.
+- Done on a copy of the scene; `wogen export` exports any saved `.blend`.
 - Bakes in the face keys and recolors (into textures), removes hidden skin, adds garment
   springs to the VRM.
 - VRM: MToon, 25 spring chains and 28 colliders on re-import, and the skirt swings.
@@ -75,18 +79,14 @@ Status as of 2026-11-07. 94 tests pass.
 
 | Issue | Impact | Fix direction |
 |---|---|---|
-| Only one hairstyle | Biggest variety gap | Harvest hair like garments (next steps) |
 | Clips/turntables only use the base character | Can't animate a generated seed from the CLI | Add `--spec/--seed` to `clip`/`turntable` (or reuse `generate` setup) |
 | Face shadows use a wide-band workaround | Faces read flatter than the references at strong side light | Normal transfer from a sphere proxy, or an SDF face-shadow map |
-| `base_f01` hair gap shows scalp from side/back | Pale stripe in turntables | Fix in VroidStudio (base hair), or paint the scalp |
-| Generation slows slightly with each run in one session (about 12 → 15 s) | Long `variants` batches | Find the leftover data (likely node groups/images from garment loads) |
+| `hair_bob` (the base hair) has no HairBack cap | Scalp shows from side/back with that style (and with no `--hair`) | Re-export the bob with a base-hair cap in VroidStudio and re-harvest |
 | Big `eye_size` + blink/expression keys | Eyelids may not fully close | Scale expression deltas near the eyes with the eye key |
 | Elbow crease at sharp bends; shorts clip in deep sits | Visible in some poses | VroidStudio weights; corrective shape keys or weight smoothing |
 | Interpolating between keyed poses can lift a planted foot briefly | Small foot slide in clips | Key IK targets, or re-run foot IK per frame before baking |
-| Props have no outline | Seat looks flat | Add the outline modifier to props |
 | No cloth sim, capsule colliders or chain-to-chain collision | Long skirts can intersect | Optional cloth bake for hero shots |
-| Assets have no license record | Provenance unclear later | Create `assets/LICENSES.md` |
-| No version control | Risk of loss as the code grows | `git init` + Git LFS (see next steps) |
+| VroidStudio terms not checked for redistribution | Matters before sharing models or parts publicly | Read the current terms; record the result in [assets/LICENSES.md](../assets/LICENSES.md) |
 
 ## Decisions
 
@@ -106,22 +106,12 @@ DirectML or CPU support before adopting one.
 
 ## Next steps (recommended order)
 
-1. **Version control.** `git init`, Git LFS for `*.vrm *.blend *.vroid`, and a first commit.
-   About 120 MB of assets and about 4,400 lines of code are currently unprotected. *(Needs your
-   go-ahead.)*
-2. **Hairstyle library.** Harvest hair from VroidStudio exports, the same way as garments.
-   - Hair meshes, hair spring chains and colliders become swappable modules, with the
-     palette applied.
-   - Add `[hair] style = {choice = [...]}` to specs.
-   - Needs a few exports from you with different hairstyles on the same body.
-3. **Generated characters in motion.** `clip`/`turntable --spec --seed`: one generated
+1. **Generated characters in motion.** `clip`/`turntable --spec --seed`: one generated
    character, one MP4. Small change.
-4. **Text → spec (phase 7).** Claude writes a validated spec from a description ("tall,
+2. **Text → spec (phase 7).** Claude writes a validated spec from a description ("tall,
    pink-haired, school uniform, shy") and renders it. Mostly prompt + schema work on top of
    `body.from_spec`.
-5. **Face quality.** SDF/normal-transfer face shadows, more face sliders (brows, nose, mouth),
+3. **Face quality.** SDF/normal-transfer face shadows, more face sliders (brows, nose, mouth),
    and eye-size-aware expressions.
-6. **Motion depth.** A walk cycle and more presets, foot-plant stabilization, and optionally
+4. **Motion depth.** A walk cycle and more presets, foot-plant stabilization, and optionally
    BVH mocap retargeting (CPU-only tools, given AMD).
-7. **Housekeeping.** Fix the per-generation slowdown, prop outlines, `assets/LICENSES.md`, and
-   a `wogen export --blend` CLI command.

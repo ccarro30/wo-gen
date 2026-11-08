@@ -93,6 +93,12 @@ def generate(spec="specs/default.toml", seed: int | None = None, base: str | Non
             outfit.recolor(garment, tint=color, layer=layer or None)
         except KeyError as e:
             params.notes.append(f"tint skipped: {e}")
+    if params.hair:
+        from . import hair
+        try:
+            hair.equip(params.hair)
+        except KeyError as e:
+            params.notes.append(f"hair skipped: {e}")
     p = params.palette
     if p.hair or p.eyes or p.skin:
         set_palette(p.hair, p.eyes, p.skin)

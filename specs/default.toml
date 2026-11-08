@@ -29,6 +29,11 @@ hair = { choice = ["#3b2a2a", "#1d1b26", "#f4b6c2", "#ff6a4d", "#e8e4f2", "#2f4f
 eyes = { choice = ["#c0392b", "#5ab0ff", "#3fbf7f", "#e0a23a", "#a05ad8", "#8a5a3c"] }
 skin = { choice = ["#ffffff", "#fff4ee", "#f6e2d6"] }
 
+[hair]
+# Library hairstyles (outfit.list_library(), slot "hair"); omit for the base model's hair.
+style = { choice = ["hair_bob", "hair_long_straight", "hair_short_loops", "hair_twintails",
+                    "hair_side_ponytail", "hair_hime_long", "hair_double_buns", "hair_ponytail_long"] }
+
 [outfit]
 # Outfit sets (see assets/garments/index.json). Optional:
 #   add  = ["cardigan_white"]                        extra garments on top of the set

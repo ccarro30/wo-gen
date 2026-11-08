@@ -40,15 +40,15 @@ def outline_color_for(base_srgb: Color, value: float = 0.32, sat_boost: float = 
     return colorsys.hsv_to_rgb(h, min(1.0, s * sat_boost + 0.1), v * value)
 
 
-_mean_cache: dict[str, Color] = {}
+_mean_cache: dict[int, Color] = {}   # by ID.session_uid; cleared by remove_character()
 
 
 def image_mean_srgb(image: bpy.types.Image | None, step: int = 16) -> Color:
     """Alpha-weighted mean color of an image (stored values, i.e. sRGB for 8-bit images)."""
     if image is None or image.size[0] == 0:
         return (0.5, 0.5, 0.5)
-    if image.name in _mean_cache:
-        return _mean_cache[image.name]
+    if image.session_uid in _mean_cache:
+        return _mean_cache[image.session_uid]
     import numpy as np
     w, h = image.size
     px = np.empty(w * h * 4, dtype=np.float32)
@@ -57,7 +57,7 @@ def image_mean_srgb(image: bpy.types.Image | None, step: int = 16) -> Color:
     mask = px[:, 3] > 0.5
     rgb = px[mask, :3] if mask.any() else px[:, :3]
     mean = tuple(float(x) for x in rgb.mean(axis=0))
-    _mean_cache[image.name] = mean
+    _mean_cache[image.session_uid] = mean
     return mean
 
 
@@ -427,6 +427,32 @@ def build_outline_material(src: bpy.types.Material, profile: ToonProfile, tint=N
     alpha = _alpha_socket(nodes, links, tex, factor[3], mode, cutoff, (-200, -100))
     _finish(mat, nodes, links, emission.outputs[0], alpha, mode, (200, 0))
     return mat
+
+
+def add_flat_outline(obj: bpy.types.Object, color: Color, width: float = 0.0025) -> None:
+    """Inverted-hull outline in one flat sRGB color, for non-character meshes (props).
+
+    Width is in the mesh's local units, so keep object scale at 1 (bake sizes into the mesh).
+    """
+    _strip_outlines(obj)
+    name = f"wgo_flat_{obj.name}"
+    mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+    mat.use_nodes = True
+    mat.use_backface_culling = True
+    nodes, links = mat.node_tree.nodes, mat.node_tree.links
+    nodes.clear()
+    emission = nodes.new("ShaderNodeEmission")
+    emission.inputs["Color"].default_value = (*srgb_to_linear(outline_color_for(color)), 1.0)
+    _finish(mat, nodes, links, emission.outputs[0], None, "OPAQUE", (200, 0))
+    n = len(obj.data.materials)
+    obj.data.materials.append(mat)
+    md = obj.modifiers.new(OUTLINE_MOD, "SOLIDIFY")
+    md.thickness = width
+    md.offset = 1.0
+    md.use_flip_normals = True
+    md.use_rim = False
+    md.use_even_offset = False
+    md.material_offset = n
 
 
 # ---------------------------------------------------------------- apply / remove

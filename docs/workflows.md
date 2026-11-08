@@ -23,6 +23,9 @@ eye_size = [0.2, 0.6]    # eye_size eye_height face_width chin_length
 hair = { choice = ["#1d1b26", "#f4b6c2"] }
 eyes = "#5ab0ff"
 
+[hair]
+style = "hair_hime_long"   # library hairstyle (hair-sheet shows them); omit for the base hair
+
 [outfit]
 set = "school"                             # tennis | sweets | school | red_dress | pink_capelet
 add = ["bow_pink"]                         # extra garments
@@ -37,7 +40,8 @@ values without Blender.
 
 1. In VroidStudio, open the **same body** (don't change body sliders) and dress it in new
    items. Shoes may differ; heel height is handled.
-2. Export VRM 1.0 with **no reductions** to `assets/base/base_f01_<anything>.vrm`.
+2. Export VRM 1.0 with **no reductions** to `assets/base/base_f01_<anything>.vrm` (not
+   `base_f01_hair*`, which is reserved for hairstyles).
 3. `uv run wogen harvest`. New garments are saved; duplicates are skipped. An export whose
    skeleton differs beyond a vertical shift is skipped with a reason.
 4. `uv run wogen outfit-sheet` and review. The new outfit set is named after the export file.
@@ -47,9 +51,23 @@ values without Blender.
    ```
    Renames live in `assets/garments/index.json` and are re-applied by every harvest
    (including `--fresh`, which rebuilds the library contents from the exports).
+6. Add the new export to [assets/LICENSES.md](../assets/LICENSES.md) and commit; `.vrm` and
+   `.blend` files go to Git LFS automatically.
 
 Use `render.garment_sheet()` to see each garment alone, and `outfit.list_layers(name)` with
 `render.layer_sheet(name)` to find which texture layer is which part.
+
+## Add hairstyles to the library
+
+1. In VroidStudio, open the same body and change **only the hair** (clothes can stay).
+2. Export VRM 1.0 with no reductions to `assets/base/base_f01_hair<anything>.vrm`. The
+   `_hair` prefix makes harvest treat it as a hairstyle, not an outfit.
+3. `uv run wogen harvest --only hair`, then `uv run wogen hair-sheet` to review.
+4. Name it from chat, e.g. `outfit.rename({"hair_9": "hair_braid"})`, add it to the
+   `[hair] style` choices in specs, and record the export in the asset license file.
+
+The hairstyle replaces the base model's hair (meshes, HairBack cap, hair springs). It takes the
+palette's hair color and keeps its own spring chains, which are also exported to VRM.
 
 ## Poses
 
@@ -67,7 +85,8 @@ and `render.clip(path)`. The CLI `clip` command uses `anim.PRESETS`; add new pre
 
 ## Export a character
 
-- CLI: `uv run wogen generate --seed 7 --export out\c.vrm --export out\c.fbx`.
+- CLI: `uv run wogen generate --seed 7 --export out\c.vrm --export out\c.fbx`, or from a saved
+  scene (e.g. one written with `--save-blend`): `uv run wogen export out\c.blend --out out\c.vrm`.
 - Chat: `export.export_character(r"...\out\c.vrm")`. It exports a copy, so the scene is
   untouched.
 - VRM (1.0) is for VRM-capable apps and viewers: MToon look, expressions, hair + skirt spring
@@ -84,6 +103,7 @@ then restart Blender and Claude Code. See [tooling.md](tooling.md).
 
 ## Run tests
 
-`uv run pytest` runs everything (94 tests, about 50 s). The 3 `blender`-marked tests launch
-headless Blender (render test, portrait job, clip job). `uv run pytest -m "not blender"` runs
-the 91 pure tests in under a second.
+`uv run pytest` runs everything (106 tests, about 47 s). The 3 `blender`-marked tests launch
+headless Blender (render test, portrait job with a hairstyle, clip job).
+`uv run pytest -m "not blender"` runs the 103 pure tests in under a second. Test temp files go
+to `.cache/pytest`.

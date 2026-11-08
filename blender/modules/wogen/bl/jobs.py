@@ -33,6 +33,8 @@ def _character_args(p: argparse.ArgumentParser) -> None:
                    help="hide garments by slot (shoes, top, ...) or name (repeatable)")
     p.add_argument("--tint", action="append", default=[], metavar="GARMENT=#RRGGBB",
                    help="tint a garment, e.g. onepiece_010_01=#ffb8cc (repeatable)")
+    p.add_argument("--hair", default=None, metavar="STYLE",
+                   help="wear a library hairstyle, e.g. hair_twintails (default: base hair)")
     p.add_argument("--through-hair", default="brow",
                    help="comma-separated features drawn over the bangs ('' to disable)")
     p.add_argument("--no-post", action="store_true")
@@ -60,6 +62,9 @@ def _prepare(args: argparse.Namespace) -> None:
         for spec in args.tint:
             name, _, color = spec.partition("=")
             outfit.recolor(name, tint=hex_to_srgb(color))
+    if args.hair:
+        from . import hair
+        hair.equip(args.hair)
     if args.seat:
         from . import props
         props.seat(args.seat)
@@ -118,15 +123,27 @@ def _clip(argv: list[str]) -> None:
 def _harvest(argv: list[str]) -> None:
     from . import character, outfit
     p = argparse.ArgumentParser(prog="harvest")
-    p.add_argument("names", nargs="*", help="assets/base/<name>.vrm exports (default: all base_f01*)")
+    p.add_argument("names", nargs="*", help="assets/base/<name>.vrm exports (default: all base_f01*; *_hair* exports are "
+                        "harvested as hairstyles)")
     p.add_argument("--reference", default="base_f01")
     p.add_argument("--fresh", action="store_true", help="ignore the index; overwrite by name")
+    p.add_argument("--only", choices=["garments", "hair"], default=None)
     args = p.parse_args(argv)
     character.ensure_vrm_addon()
     character.clear_default_scene()
-    for line in outfit.harvest(args.names or None, args.reference, restore=False,
-                               fresh=args.fresh):
-        print("[harvest]", line)
+    from . import hair
+    hair_prefix = f"{args.reference}_hair"
+    garment_names = [n for n in args.names if not n.startswith(hair_prefix)]
+    hair_names = [n for n in args.names if n.startswith(hair_prefix)]
+    do_garments = args.only != "hair" and (garment_names or not args.names)
+    do_hair = args.only != "garments" and (hair_names or not args.names)
+    if do_garments:
+        for line in outfit.harvest(garment_names or None, args.reference, restore=False,
+                                   fresh=args.fresh):
+            print("[harvest]", line)
+    if do_hair:
+        for line in hair.harvest(hair_names or None, args.reference, fresh=args.fresh):
+            print("[harvest]", line)
     print("[harvest] library:", ", ".join(outfit.list_library()))
 
 
@@ -139,6 +156,21 @@ def _outfit_sheet(argv: list[str]) -> None:
     args = p.parse_args(argv)
     character.prepare(args.base)
     print(render.outfit_sheet(out_path=args.out, view_yaw=args.view_yaw))
+
+
+def _hair_sheet(argv: list[str]) -> None:
+    from . import character, render
+    p = argparse.ArgumentParser(prog="hair-sheet")
+    p.add_argument("--base", default="base_f01")
+    p.add_argument("--outfit", default=None, metavar="SET")
+    p.add_argument("--framing", choices=["face", "bust", "full"], default="bust")
+    p.add_argument("--out", required=True)
+    args = p.parse_args(argv)
+    character.prepare(args.base)
+    if args.outfit:
+        from . import outfit
+        outfit.equip_set(args.outfit)
+    print(render.hair_sheet(out_path=args.out, framing=args.framing))
 
 
 def _parse_seeds(text: str) -> list[int]:
@@ -208,8 +240,8 @@ def _variants(argv: list[str]) -> None:
     def make(seed):
         def fn():
             params = generate.generate(args.spec, seed)
-            print(f"[variants] seed {seed}: " + "; ".join(params.notes[:1] + [
-                f"outfit={params.outfit}", f"hair={params.palette.hair}"]))
+            print(f"[variants] seed {seed}: " + "; ".join(params.notes + [
+                f"outfit={params.outfit}", f"hair={params.hair or 'base'} {params.palette.hair}"]))
             face.expression("smile_soft")
             render.portrait(args.framing, (args.cell, args.cell), pose="idle",
                             view_yaw=args.view_yaw)
@@ -242,6 +274,7 @@ def _render_test(argv: list[str]) -> None:
 
 JOBS = {"render_test": _render_test, "portrait": _portrait, "turntable": _turntable,
         "clip": _clip, "harvest": _harvest, "outfit_sheet": _outfit_sheet,
+        "hair_sheet": _hair_sheet,
         "generate": _generate, "variants": _variants, "export": _export}
 
 

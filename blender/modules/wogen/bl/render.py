@@ -355,6 +355,26 @@ def garment_sheet(names: list[str] | None = None, out_path: str | None = None,
     return contact_sheet([(n, wear(n)) for n in names], out_path, "full", cell, cols)
 
 
+def hair_sheet(names: list[str] | None = None, out_path: str | None = None,
+               view_yaws: tuple[float, ...] = (25.0, 150.0), framing: str = "bust",
+               cell: int = 448) -> str:
+    """Each library hairstyle (columns) from each view angle (rows)."""
+    from ..paths import OUT_DIR
+    from . import hair
+    from .character import character_armature
+    names = names or hair.list_styles()
+    out_path = out_path or str(OUT_DIR / "hair.png")
+    scene, arm = bpy.context.scene, character_armature()
+
+    def show(name, yaw):
+        def fn():
+            hair.equip(name)
+            portrait_camera(scene, arm, framing, view_yaw=yaw)
+        return fn
+    cells = [(f"{n} @{yaw:g}", show(n, yaw)) for yaw in view_yaws for n in names]
+    return contact_sheet(cells, out_path, framing, cell, len(names))
+
+
 def layer_sheet(name: str, out_path: str | None = None, framing: str = "full",
                 view_yaw: float = 25, cell: int = 448) -> str:
     """The garment as-is, then once per texture layer with that layer tinted magenta."""

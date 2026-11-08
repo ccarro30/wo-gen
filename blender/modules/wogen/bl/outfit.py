@@ -87,17 +87,17 @@ def _compact_slots(obj: bpy.types.Object) -> None:
     me.update()
 
 
-_alpha_cache: dict[str, object] = {}
+_alpha_cache: dict[int, object] = {}   # by ID.session_uid; cleared by remove_character()
 
 
 def _alpha_grid(image):
     import numpy as np
-    if image.name not in _alpha_cache:
+    if image.session_uid not in _alpha_cache:
         w, h = image.size
         px = np.empty(w * h * 4, dtype=np.float32)
         image.pixels.foreach_get(px)
-        _alpha_cache[image.name] = px.reshape(h, w, 4)[:, :, 3].copy()
-    return _alpha_cache[image.name]
+        _alpha_cache[image.session_uid] = px.reshape(h, w, 4)[:, :, 3].copy()
+    return _alpha_cache[image.session_uid]
 
 
 def prune_transparent(obj: bpy.types.Object) -> int:
@@ -245,7 +245,8 @@ def update_hidden_skin(margin: float = 0.02, erode: int = 1) -> int:
     group = body.vertex_groups.get(HIDDEN_GROUP) or body.vertex_groups.new(name=HIDDEN_GROUP)
     group.remove(list(range(len(body.data.vertices))))
     to_body = body.matrix_world.inverted()
-    coverage = [_Coverage(g, to_body) for g in garments() if not g.hide_render]
+    coverage = [_Coverage(g, to_body) for g in garments()      # hair moves: never hides skin
+                if not g.hide_render and g.get("wg_slot") != "hair"]
     hidden = {v.index for v in body.data.vertices
               if any(c.covers(v.co, margin) for c in coverage)}
     if erode and hidden:
@@ -450,6 +451,8 @@ def rename(mapping: dict[str, str | tuple[str, str]] | None = None,
             log.append(f"{old} -> {new}")
         if old in index["signatures"]:
             index["signatures"][new] = index["signatures"].pop(old)
+        if old in index["slots"]:
+            index["slots"].setdefault(new, index["slots"].pop(old))
         for members in index["sets"].values():
             members[:] = [new if m == old else m for m in members]
     for old, new in index["set_renames"].items():
@@ -473,12 +476,14 @@ def list_sets() -> dict[str, list[str]]:
 
 
 def equip_set(name: str) -> str:
-    """Wear exactly the garments of one harvested export (other garments are hidden)."""
+    """Wear exactly the garments of one harvested export (other garments are hidden; the
+    hairstyle is kept)."""
     sets = list_sets()
     if name not in sets:
         raise KeyError(f"No outfit set {name!r}. Sets: {sorted(sets)}")
     for g in garments():
-        g.hide_render = g.hide_viewport = True
+        if g.get("wg_slot") != "hair":
+            g.hide_render = g.hide_viewport = True
     for garment in sets[name]:
         equip(garment, exclusive=False)   # sets may layer several items of one slot
     return f"wearing {name}: {sets[name]}"
@@ -502,11 +507,15 @@ def harvest(names: list[str] | None = None, reference: str = "base_f01",
     import io
 
     from .character import BASE_DIR, character_armature, import_base
-    names = names or sorted(p.stem for p in BASE_DIR.glob(f"{reference}*.vrm"))
+    # Exports named <reference>_hair* only differ in hairstyle: wogen.bl.hair harvests those.
+    names = names or sorted(p.stem for p in BASE_DIR.glob(f"{reference}*.vrm")
+                            if not p.stem.startswith(f"{reference}_hair"))
     # ``fresh`` ignores the existing index and overwrites library files by name.
     index = _read_index()
-    if fresh:                                  # keep names/slots, rebuild contents
-        index["signatures"], index["sets"] = {}, {}
+    if fresh:                                  # keep names/slots (and hairstyles), rebuild contents
+        index["signatures"] = {k: v for k, v in index["signatures"].items()
+                               if index["slots"].get(k) == "hair"}
+        index["sets"] = {}
     sigs, sets = index["signatures"], index["sets"]
     if not fresh:
         for existing in list_library():      # library entries saved before the index existed
@@ -652,6 +661,9 @@ def equip(name: str, exclusive: bool = True) -> str:
         if missing:
             print(f"[wogen] {name}: weighted vertex groups without bones: {missing[:8]}")
         toon.apply_toon([existing])
+    if existing["wg_slot"] == "hair":
+        from .hair import strip_base
+        strip_base()                           # a hairstyle module replaces the base hair
     for g in garments():
         if (exclusive and g is not existing and not g.hide_render
                 and g["wg_slot"] in CONFLICTS[existing["wg_slot"]]):

@@ -73,6 +73,7 @@ class CharacterParams:
     face: FaceParams = field(default_factory=FaceParams)
     palette: Palette = field(default_factory=Palette)
     outfit: str | None = None                       # outfit set name
+    hair: str | None = None                         # hairstyle (library, slot "hair")
     garment_add: list[str] = field(default_factory=list)       # extra garments
     garment_tints: dict[str, str] = field(default_factory=dict)  # "name" or "name:LAYER" -> hex
     notes: list[str] = field(default_factory=list)  # adjustments made while validating
@@ -130,7 +131,11 @@ def from_spec(resolved: dict) -> CharacterParams:
     out = resolved.get("outfit", {})
     if isinstance(out, str):
         out = {"set": out}
+    hair = resolved.get("hair", {})
+    if isinstance(hair, str):
+        hair = {"style": hair}
     params = CharacterParams(body=body, face=face, palette=palette, outfit=out.get("set"),
+                             hair=hair.get("style"),
                              garment_add=list(out.get("add", [])),
                              garment_tints=dict(out.get("tint", {})))
     unknown = (set(resolved.get("body", {})) - set(BODY_RANGES)) | \

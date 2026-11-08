@@ -10,6 +10,7 @@ from ..paths import ASSETS_DIR
 
 BASE_DIR = ASSETS_DIR / "base"
 CHARACTER_COLLECTION = "wogen_character"
+IMPORTED_ACTIONS_KEY = "wg_imported_actions"
 VRM_ADDON = "bl_ext.blender_org.vrm"
 
 
@@ -68,12 +69,20 @@ def import_base(name: str = "base_f01", replace: bool = True) -> bpy.types.Objec
     layer_coll = bpy.context.view_layer.layer_collection.children[coll.name]
     prev_active = bpy.context.view_layer.active_layer_collection
     bpy.context.view_layer.active_layer_collection = layer_coll
+    colls_before = set(scene.collection.children)
+    actions_before = set(bpy.data.actions)
     try:
         result = bpy.ops.import_scene.vrm(filepath=str(path))
     finally:
         bpy.context.view_layer.active_layer_collection = prev_active
     if "FINISHED" not in result:
         raise RuntimeError(f"VRM import failed: {result}")
+    # The add-on puts its collider empties in a scene-level "Colliders" collection and adds a
+    # fake-user "T-Pose" action: adopt both so remove_character() can free them.
+    for extra in set(scene.collection.children) - colls_before - {coll}:
+        scene.collection.children.unlink(extra)
+        coll.children.link(extra)
+    coll[IMPORTED_ACTIONS_KEY] = [a.name for a in set(bpy.data.actions) - actions_before]
 
     armature = next((o for o in coll.all_objects if o.type == "ARMATURE"), None)
     if armature is None:
@@ -83,38 +92,40 @@ def import_base(name: str = "base_f01", replace: bool = True) -> bpy.types.Objec
 
 
 def remove_character() -> None:
+    """Delete the character and free everything it used, so repeated generations in one
+    session don't accumulate data (and slow down).
+
+    Ends with a recursive orphan purge: any datablock left with no users is deleted, including
+    unrelated orphans in a live session (they would be dropped on save anyway).
+    """
+    from ..paths import ASSETS_DIR as assets
     coll = bpy.data.collections.get(CHARACTER_COLLECTION)
     if coll is None:
         return
-    meshes, materials, images = set(), set(), set()
-    for obj in coll.all_objects:
+    actions = [bpy.data.actions.get(n) for n in coll.get(IMPORTED_ACTIONS_KEY, [])]
+    for obj in coll.all_objects:   # toon.apply_toon() fake-users the MToon sources
         if obj.type == "MESH":
-            meshes.add(obj.data)
-            materials.update(m for m in obj.data.materials if m)
-    for mat in list(materials):   # include the MToon sources behind wg_/wgo_/wgx_ twins
-        src = bpy.data.materials.get(mat.get("wg_source", "")) if mat.get("wg_source") else None
-        if src is not None:
-            materials.add(src)
-    for mat in materials:
-        if mat.node_tree:
-            images.update(n.image for n in mat.node_tree.nodes
-                          if n.type == "TEX_IMAGE" and n.image is not None)
-    for mat in materials:
-        mat.use_fake_user = False   # set by toon.apply_toon() to protect MToon sources
+            for mat in obj.data.materials:
+                src = bpy.data.materials.get(mat.get("wg_source", "")) if mat else None
+                for m in (mat, src):
+                    if m is not None:
+                        m.use_fake_user = False
     for obj in list(coll.all_objects):
         bpy.data.objects.remove(obj, do_unlink=True)
     for child in list(coll.children_recursive):
         bpy.data.collections.remove(child)
     bpy.data.collections.remove(coll)
-    # Free the old character's data so re-imports don't accumulate ".001" duplicates.
-    for datablocks, items in ((bpy.data.meshes, meshes), (bpy.data.materials, materials),
-                              (bpy.data.images, images)):
-        for item in items:
-            try:
-                if item.users == 0:
-                    datablocks.remove(item)
-            except ReferenceError:
-                pass
+    for action in actions:
+        if action is not None:
+            bpy.data.actions.remove(action)
+    garments = (assets / "garments").resolve()
+    for lib in list(bpy.data.libraries):   # entries left by appending library garments
+        if Path(bpy.path.abspath(lib.filepath)).resolve().parent == garments:
+            bpy.data.libraries.remove(lib)
+    bpy.data.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
+    from . import outfit, toon
+    toon._mean_cache.clear()
+    outfit._alpha_cache.clear()
 
 
 def character_meshes() -> list[bpy.types.Object]:

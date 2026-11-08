@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import bpy
 
-from .toon import make_cel_material
+from .toon import add_flat_outline, make_cel_material
 
 COLLECTION = "wogen_props"
 
@@ -35,14 +35,15 @@ def seat(height: float = 0.45, width: float = 0.46, depth: float = 0.42,
     mesh = bpy.data.meshes.new(name)
     bm = bmesh.new()
     bmesh.ops.create_cube(bm, size=1.0)
+    bmesh.ops.scale(bm, vec=(width, depth, height), verts=bm.verts)   # unit scale for the outline
     bm.to_mesh(mesh)
     bm.free()
     obj = bpy.data.objects.new(name, mesh)
-    obj.scale = (width, depth, height)
     obj.location = (0.0, y + depth / 2 - 0.05, height / 2)
     shadow = tuple(c * 0.7 for c in color)
     mat = bpy.data.materials.get("wg_prop_seat") or make_cel_material("wg_prop_seat", color, shadow)
     mesh.materials.append(mat)
+    add_flat_outline(obj, color)
     _collection().objects.link(obj)
     return obj
 

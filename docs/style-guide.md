@@ -92,7 +92,8 @@ from the images in `references/`.
 | Brows through the bangs | ✅ (eyeline optional) | `overlay` |
 | Blush driven by expressions | ⬜ | — |
 | Two-tone/streak hair, angel ring | 🟡 Colorize keeps painted highlights; no streak controls | `toon._recolor` |
-| Hair accessories as modules | 🟡 Possible through garments; no hairstyle library | `outfit` |
+| Hairstyles as modules | ✅ 8 VroidStudio styles, swappable, with physics | `hair` |
+| Hair accessories as modules | 🟡 Possible as garments (slot `accessory`) | `outfit` |
 | Urban techwear outfits | ⬜ Current library is VroidStudio items (casual, dresses, school) | `assets/garments` |
 | Adult proportions | ✅ Enforced (≥ 6.6 heads) | `body.validate` |
 | Bloom, grade, chromatic aberration, vignette | ✅ | `post` |

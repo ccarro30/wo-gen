@@ -43,6 +43,6 @@ def test_clip_job_bakes_physics_and_writes_mp4(tmp_path):
 def test_portrait_job_renders_character(tmp_path):
     out = tmp_path / "portrait.png"
     args = ["portrait", "--framing", "face", "--width", "256", "--height", "256",
-            "--expression", "happy", "--out", str(out)]
+            "--expression", "happy", "--hair", "hair_twintails", "--out", str(out)]
     assert cli.main(args) == 0
     assert out.read_bytes()[:8] == PNG_MAGIC

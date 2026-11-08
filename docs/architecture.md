@@ -55,6 +55,7 @@ Blender modules (`wogen.bl`):
 | `overlay` | Brows (and optional lash lines) drawn through the bangs |
 | `body` | Rest-pose retargeting for body params; garment/rig fitting; procedural face keys |
 | `outfit` | Split Body into garments, hidden-skin mask, recolor/layers, library save/equip, harvest, sets, names |
+| `hair` | Hairstyle modules: build from an export's hair, harvest, strip the base hair, equip |
 | `garment_rig` | Secondary bones + spring chains + colliders carried by garments |
 | `face` | Expressions and gaze |
 | `pose` | Applying poses (FK + analytic two-bone IK), saving poses, grounding (with shoe lift) |
@@ -62,7 +63,7 @@ Blender modules (`wogen.bl`):
 | `physics` | VRM SpringBone 1.0 solver, baked to keyframes (character + garment chains) |
 | `render` | Portrait camera/lights/world, turntable, clips, contact sheets |
 | `post` | Compositor: bloom, chromatic aberration, grade, vignette |
-| `props` | Simple props (seat) |
+| `props` | Simple props (seat) with a flat-color outline (`toon.add_flat_outline`) |
 | `generate` | Spec + seed → finished character; palette |
 | `export` | VRM/FBX export from a prepared copy |
 | `jobs` | Headless job entry points mirroring the CLI |
@@ -70,7 +71,11 @@ Blender modules (`wogen.bl`):
 ## Generation pipeline (`generate.generate`)
 
 1. **Resolve** the spec with the seed → `CharacterParams` (clamped; adult rule applied).
-2. **Import** `assets/base/<base>.vrm` (VRM add-on) into `wogen_character`.
+2. **Import** `assets/base/<base>.vrm` (VRM add-on) into `wogen_character`; the add-on's
+   collider collection and T-pose action are adopted into it. The previous character is
+   removed first (`character.remove_character`): its objects, collections and actions are
+   deleted, garment library entries dropped, orphans purged recursively, and image caches
+   cleared, so long batches don't accumulate data or slow down.
 3. **Body retarget** (`bl/body.py`): per-bone affine transforms, then linear blend skinning
    of every mesh's rest geometry (all shape keys), then the bones are moved.
    - Lengths stretch along the joint segment; widths scale radially. Head and bust scale
@@ -87,9 +92,11 @@ Blender modules (`wogen.bl`):
    - Faces transparent in their layer are pruned, and each item becomes a `Garment_*`
      object.
    - Skin under opaque cloth is masked (alpha sampled at the exact surface point).
-8. **Outfit set / extra garments** from the library. On equip, each garment is fitted to the
-   body, its rig bones are installed, MToon is re-enabled, and the hidden skin is
-   recomputed.
+8. **Outfit set / extra garments / hairstyle** from the library. On equip, each garment is
+   fitted to the body, its rig bones are installed, MToon is re-enabled, and the hidden skin
+   is recomputed (hair never hides skin). The first hairstyle equipped removes the base hair
+   (`hair.strip_base`: meshes, Body's HairBack faces, hair spring chains, `J_Sec_Hair*`
+   bones).
 9. **Palette**: hair/iris *colorize* (texture luminance remapped onto a target color, keeping
    the painted shading), brows follow the hair, and skin gets a tint.
 
@@ -107,7 +114,12 @@ Generated characters carry `wg_generated` (resolved spec + params) on the armatu
   renames. Renames are re-applied on every harvest.
 - **Garment rigs**: skirts/dresses carry bones the base lacks (prefixed `<garment>.`), their
   spring chains and their hip/leg colliders. Equip installs the bones, physics simulates the
-  chains, and export writes them into the VRM spring data.
+  chains, and export writes them into the VRM spring data. The prefix is the id at harvest
+  time (e.g. `hair_4.`), not the later descriptive name; ids are unique, so it doesn't matter.
+- **Hairstyles** (`hair.harvest`) are garments with slot `hair`. From `base_f01` and each
+  `base_f01_hair*.vrm` (same body, other hair), the `Hair###` meshes and the `HairBack` layer
+  VroidStudio merges into Body are joined into one mesh. Its rig takes every `J_Sec_Hair*`
+  bone, spring chain and collider. Outfit sets never include or hide hair.
 - **Slots**: full, top, bottom, outer, shoes, legwear, inner, accessory. Only same-slot items
   conflict; sets layer freely.
 

@@ -48,3 +48,16 @@ def test_from_spec_maps_sections_and_flags_unknown_keys():
     assert p.outfit == "school" and p.garment_add == ["bow_pink"]
     assert p.garment_tints == {"skirt_plaid": "#223344", "blouse_white:CLOTH_01": "#c03050"}
     assert any("wingspan" in n for n in p.notes)
+
+
+def test_from_spec_hair_style_table_or_string():
+    assert B.from_spec({"hair": {"style": "hair_twintails"}}).hair == "hair_twintails"
+    assert B.from_spec({"hair": "hair_bob"}).hair == "hair_bob"
+    assert B.from_spec({}).hair is None
+
+
+@pytest.mark.parametrize("seed", range(10))
+def test_default_spec_picks_a_hairstyle(seed):
+    from wogen.paths import REPO_ROOT
+    p = B.from_spec(S.resolve(S.load_spec(REPO_ROOT / "specs" / "default.toml"), seed))
+    assert p.hair and p.hair.startswith("hair_")

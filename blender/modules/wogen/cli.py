@@ -22,6 +22,7 @@ BLENDER_JOBS = {
     "turntable": ("turntable", "turntable.mp4"),
     "clip": ("clip", "clip.mp4"),
     "outfit-sheet": ("outfit_sheet", "outfits.png"),
+    "hair-sheet": ("hair_sheet", "hair.png"),
     "generate": ("generate", "generated.png"),
     "variants": ("variants", "variants.png"),
 }
@@ -56,6 +57,21 @@ def _cmd_resolve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_export(args: argparse.Namespace) -> int:
+    blend = Path(args.blend).resolve()
+    if not blend.is_file():
+        print(f"export: no such file {blend}", file=sys.stderr)
+        return 1
+    code = 0
+    for target in args.out:      # one process per format: export prepares the scene destructively
+        out = Path(target).resolve()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        extra = ["--name", args.name] if args.name else []
+        code = run_job("export", "--out", str(out), *extra, blend_file=blend) or code
+        print(f"export {'OK' if out.is_file() else 'FAILED'}: {out}")
+    return code
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] in BLENDER_JOBS:
@@ -67,17 +83,27 @@ def main(argv: list[str] | None = None) -> int:
                + ", ".join(BLENDER_JOBS),
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    p = sub.add_parser("harvest", help="Extract garments from assets/base/*.vrm into the library")
+    p = sub.add_parser("harvest", help="Extract garments and hairstyles from assets/base/*.vrm into the library")
     p.add_argument("names", nargs="*")
     p.add_argument("--reference", default="base_f01")
     p.add_argument("--fresh", action="store_true", help="ignore the index; overwrite by name")
+    p.add_argument("--only", choices=["garments", "hair"], default=None)
     p.set_defaults(func=lambda a: run_job("harvest", *a.names, "--reference", a.reference,
-                                          *(["--fresh"] if a.fresh else [])))
+                                          *(["--fresh"] if a.fresh else []),
+                                          *(["--only", a.only] if a.only else [])))
 
     p = sub.add_parser("resolve", help="Resolve a TOML spec with a seed and print JSON")
     p.add_argument("spec")
     p.add_argument("--seed", type=int, default=None)
     p.set_defaults(func=_cmd_resolve)
+
+    p = sub.add_parser("export", help="Export the character in a saved .blend to VRM/FBX "
+                                      "(the .blend is not modified)")
+    p.add_argument("blend", help="e.g. a scene saved with 'generate --save-blend'")
+    p.add_argument("--out", action="append", required=True, metavar="PATH",
+                   help=".vrm or .fbx (repeatable)")
+    p.add_argument("--name", default=None, help="model name (default: from the scene)")
+    p.set_defaults(func=_cmd_export)
 
     args = parser.parse_args(argv)
     return args.func(args)

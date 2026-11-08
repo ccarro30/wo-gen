@@ -67,3 +67,9 @@ def test_only_same_slot_conflicts():
     for slot, conflicts in G.CONFLICTS.items():
         assert conflicts <= {slot}, slot
     assert G.CONFLICTS["accessory"] == set()
+
+
+def test_hair_slot_swaps_only_hair():
+    assert G.CONFLICTS["hair"] == {"hair"}
+    assert all("hair" not in c for s, c in G.CONFLICTS.items() if s != "hair")
+    assert G.garment_key("N00_000_00_HairBack_00_HAIR") is None      # HairBack stays out of garments

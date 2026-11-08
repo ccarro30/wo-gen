@@ -23,6 +23,8 @@ module-name = "wogen"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["blender: needs a Blender executable (slow)"]
+# Keep tmp_path inside the workspace (gitignored), not the system temp.
+addopts = "--basetemp=.cache/pytest"
 
 [dependency-groups]
 dev = [

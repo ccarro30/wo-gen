@@ -29,10 +29,11 @@ SLOTS = {
 }
 # Equipping a garment in one slot removes garments in the conflicting slots. Only the same
 # slot conflicts: VroidStudio layers items freely (e.g. a "Onepiece" skirt under a top).
-# "outer" layers over a top (cardigans, jackets).
+# "outer" layers over a top (cardigans, jackets). "hair" holds hairstyle modules.
 CONFLICTS = {
     "full": {"full"}, "top": {"top"}, "bottom": {"bottom"}, "shoes": {"shoes"},
     "legwear": {"legwear"}, "inner": {"inner"}, "outer": {"outer"}, "accessory": set(),
+    "hair": {"hair"},
 }
 VALID_NAME = re.compile(r"^[a-z0-9][a-z0-9_]*$")
 

@@ -11,7 +11,7 @@ Installs need explicit approval (global rule 1). Everything below marked ✅ is 
 | **Python + uv** | ✅ Python 3.14, uv | CLI, tests | `requires-python >=3.13`. `.venv` via `uv sync`. Dev group: `pytest`, `fake-bpy-module`. |
 | **MCP for Blender** | ✅ 2.2.7, pinned | Claude ↔ live Blender | See below. |
 | **VroidStudio** | ✅ (winget) | Base body, garments, (next) hairstyles | Source project in `vroid/model.vroid`. |
-| **Git + Git LFS** | ✅ installed | Version control | **The repo isn't initialized yet.** LFS for `*.vrm *.blend *.vroid`. |
+| **Git + Git LFS** | ✅ installed; repo on GitHub | Version control | `.gitattributes` puts `*.vrm *.vroid *.blend *.fbx *.png *.jpg *.mp4` in LFS. Set up LFS once per machine before cloning. |
 | **GPU** | ✅ AMD RX 9070 XT (HIP) | EEVEE rendering | Keep Adrenalin drivers current. Cycles works on HIP but isn't used for the toon look. |
 
 Not needed: standalone ffmpeg (Blender writes H.264 MP4 itself), Wiggle 2 (own solver), Rigify
@@ -45,7 +45,7 @@ halves.
   `--background --factory-startup --python-exit-code 1 --python-expr <bootstrap> -- <job> <args>`.
   Jobs live in `wogen/bl/jobs.py`; options after the command are forwarded unchanged.
 - **Tests:** run `uv run pytest`. Pure modules take about 1 s; the `blender`-marked
-  integration tests run headless renders, a portrait job and a clip job (about 45 s total).
+  integration tests run headless renders, a portrait job and a clip job (about 47 s total).
 - **Scratch and output:** temp files go to `.cache/tmp/` (deleted after use), and outputs go
   to `out/`. Both are gitignored, as are `references/` and the `.cache/` wheel cache.
 - **Live session:** in chat, Claude calls `wogen.bl.*` through MCP. Reload edited modules with
@@ -58,5 +58,6 @@ halves.
   redistributing).
 - `references/` holds third-party copyrighted screenshots, used as a style reference only and
   never committed.
-- A provenance file, `assets/LICENSES.md`, is recommended but doesn't exist yet.
+- Provenance is recorded in [assets/LICENSES.md](../assets/LICENSES.md); add a row for every new
+  asset.
 - Avoid marketplace assets that forbid AI use or redistribution, and MMD/game-ripped models.
