@@ -90,10 +90,11 @@ PROFILES: dict[str, ToonProfile] = {
 }
 MESH_OUTLINE_SCALE = {"Face": 0.6}   # thinner silhouette line on the face mesh
 
-# Per-mesh overrides. Face skin: low threshold + wide band keeps the face mostly lit and
-# avoids blotchy nose/cheek shadows until face-normal editing / SDF shadows land.
+# Per-mesh overrides. Face skin shades with baked ellipsoid normals (bl/face_shading.py), so
+# it takes a crisp band; the slightly lower threshold keeps the face lit up to ~70 degrees of
+# key-light azimuth before the shadow reaches the nose.
 PROFILE_OVERRIDES: dict[tuple[str, str], ToonProfile] = {
-    ("Face", "SKIN"): ToonProfile(shadow_tint=(0.98, 0.86, 0.84), threshold=0.22, softness=0.12,
+    ("Face", "SKIN"): ToonProfile(shadow_tint=(0.98, 0.84, 0.82), threshold=0.36, softness=0.02,
                                   rim=0.30),
 }
 

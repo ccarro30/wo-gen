@@ -50,6 +50,13 @@ def test_from_spec_maps_sections_and_flags_unknown_keys():
     assert any("wingspan" in n for n in p.notes)
 
 
+def test_feature_face_keys_are_read_and_clamped():
+    p = B.from_spec({"face": {"brow_height": 0.4, "brow_tilt": -2.0, "nose_size": -0.5,
+                              "mouth_width": 0.3}})
+    assert (p.face.brow_height, p.face.nose_size, p.face.mouth_width) == (0.4, -0.5, 0.3)
+    assert p.face.brow_tilt == -1.0
+
+
 def test_from_spec_hair_style_table_or_string():
     assert B.from_spec({"hair": {"style": "hair_twintails"}}).hair == "hair_twintails"
     assert B.from_spec({"hair": "hair_bob"}).hair == "hair_bob"

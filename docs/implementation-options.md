@@ -47,7 +47,8 @@ library is the next planned module.
 **Recommendation:** EEVEE plus our own toon node group, with inverted-hull outline and face
 normal editing. MToon-compatible parameters where that's cheap.
 
-**Outcome:** As recommended, except face normal editing (a wide face ramp is the stopgap).
+**Outcome:** As recommended. Face shadows use ellipsoid normals (computed, not transferred
+from a proxy), set in head space by geometry nodes so shape keys can't tilt them.
 MToon stays as the source material, and export restores it.
 
 ## 4. Rigging and face
@@ -100,8 +101,9 @@ landmarks and floor anchors. Custom poses are saved as TOML. Procedural noise is
 - **Video-to-motion AI** (⚠ evaluate later): monocular-video pose estimators that output BVH.
   This is the fastest way to get custom motion.
 
-**Outcome so far:** keyed sequences of library poses (presets). No NLA, mocap or walk cycle
-yet.
+**Outcome so far:** keyed sequences of library poses and generators (13 presets including
+walk, run and spin), per-frame foot planting, chains with transitions and seamless loops. No
+NLA yet. Mocap: our own BVH retargeter (no Rokoko add-on), with pinned CMU clips.
 
 ## 8. Rendering and output
 
@@ -112,7 +114,7 @@ yet.
 - A turntable render is the standard QA output for every generated character.
 
 **Outcome:** as recommended. EEVEE only, PNG plus H.264 MP4 written by Blender directly, and
-contact sheets as the main QA tool. Turntables currently use the base character only.
+contact sheets as the main QA tool. Turntables and clips work for any generated character.
 
 ## 9. AI assistance (optional layer)
 
@@ -123,7 +125,8 @@ contact sheets as the main QA tool. Turntables currently use the base character 
   stored as assets so builds stay reproducible.
 
 **Outcome so far:** the chat-driven visual review loop is in daily use (MCP `look` plus contact
-sheets). Text → spec isn't built yet.
+sheets). Text → spec works in chat (catalog + strict check + vocabulary guide); an
+unattended API-based command is deferred.
 
 ## 10. Languages
 

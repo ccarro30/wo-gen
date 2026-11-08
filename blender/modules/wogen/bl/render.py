@@ -81,8 +81,9 @@ def portrait_camera(scene: bpy.types.Scene, armature: bpy.types.Object, framing:
     """Camera aimed at the character. framing: 'face' | 'bust' | 'full'.
 
     ``view_yaw`` orbits the camera (degrees; + moves it toward the character's left,
-    e.g. 35 for a three-quarter view of her left side). Framing follows the posed head,
-    so sitting/crouching poses stay in frame.
+    e.g. 35 for a three-quarter view of her left side). Face/bust follow the posed head;
+    full fits the posed bounds of every visible character mesh (hair, skirts, legs) at the
+    current render aspect, so sitting/crouching poses stay in frame.
     """
     from mathutils import Matrix, Vector
     head = armature.matrix_world @ armature.pose.bones["J_Bip_C_Head"].head
@@ -90,8 +91,9 @@ def portrait_camera(scene: bpy.types.Scene, armature: bpy.types.Object, framing:
     frames = {   # (look-at point, vertical extent to fit in metres)
         "face": (head + Vector((0, 0, 0.07)), 0.34),
         "bust": (head + Vector((0, 0, -0.06)), 0.66),
-        "full": (Vector((head.x, head.y, height / 2)), height * 1.1),
     }
+    if framing == "full":
+        frames["full"] = _fit_full(scene, armature, view_yaw) or             (Vector((head.x, head.y, height / 2)), height * 1.1)
     target, extent = frames[framing]
     cam_data = bpy.data.cameras.get("wg_cam") or bpy.data.cameras.new("wg_cam")
     cam = _ensure_object("wg_cam", cam_data, scene)
@@ -104,6 +106,32 @@ def portrait_camera(scene: bpy.types.Scene, armature: bpy.types.Object, framing:
     cam.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
     scene.camera = cam
     return cam
+
+
+def _fit_full(scene, armature, view_yaw: float, margin: float = 1.08):
+    """(look-at point, vertical extent) fitting all visible character meshes as posed."""
+    from mathutils import Matrix, Vector
+    from .character import character_meshes
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    corners = []
+    for obj in character_meshes():
+        if obj.hide_render:
+            continue
+        ev = obj.evaluated_get(depsgraph)
+        corners += [ev.matrix_world @ Vector(c) for c in ev.bound_box]
+    if not corners:
+        return None
+    side = Matrix.Rotation(math.radians(view_yaw), 3, "Z") @ Vector((1.0, 0.0, 0.0))
+    xs = [c.dot(side) for c in corners]
+    zs = [c.z for c in corners]
+    lo, hi = min(zs), max(zs)
+    left, right = min(xs), max(xs)
+    aspect = scene.render.resolution_x / max(1, scene.render.resolution_y)
+    extent = max(hi - lo, (right - left) / aspect) * margin
+    centre = sum(corners, Vector()) / len(corners)
+    across = (left + right) / 2 - centre.dot(side)
+    target = Vector((centre.x, centre.y, (lo + hi) / 2)) + side * across
+    return target, extent
 
 
 def portrait(framing: str = "bust", resolution: tuple[int, int] = (1600, 2000),
@@ -128,13 +156,13 @@ def portrait(framing: str = "bust", resolution: tuple[int, int] = (1600, 2000),
     apply_toon_color_management(scene)
     setup_world(scene)
     setup_lights(scene)
+    scene.render.resolution_x, scene.render.resolution_y = resolution   # full framing uses aspect
+    scene.render.resolution_percentage = 100
     portrait_camera(scene, arm, framing, view_yaw=view_yaw)
     if post:
         post_mod.setup_post(scene=scene)
     else:
         post_mod.disable_post(scene)
-    scene.render.resolution_x, scene.render.resolution_y = resolution
-    scene.render.resolution_percentage = 100
     configure_still(scene, out_path or "")
     if out_path:
         bpy.ops.render.render(write_still=True)
@@ -144,6 +172,9 @@ def portrait(framing: str = "bust", resolution: tuple[int, int] = (1600, 2000),
 
 def configure_video(scene: bpy.types.Scene, out_path: str, fps: int = 24) -> None:
     """MP4 / H.264 output (Blender 5.x: media_type VIDEO + FFMPEG)."""
+    r = scene.render                       # H.264 needs even frame sizes: round odd ones up
+    r.resolution_x += r.resolution_x % 2
+    r.resolution_y += r.resolution_y % 2
     settings = scene.render.image_settings
     settings.media_type = "VIDEO"
     settings.file_format = "FFMPEG"
@@ -210,20 +241,66 @@ def turntable(frames: int = 96, framing: str = "full", resolution: tuple[int, in
 
 
 def clip(out_path: str, framing: str = "bust", resolution: tuple[int, int] = (1080, 1350),
-         post: bool = True, view_yaw: float = 0.0, fps: int | None = None) -> str:
+         post: bool = True, view_yaw: float = 0.0, fps: int | None = None,
+         follow: bool = False) -> str:
     """Render the scene's current animation (frame range) to MP4 from a portrait camera.
 
     Pair with ``anim.preset(...)`` / ``anim.sequence(...)`` and ``physics.bake()``.
+    ``follow`` moves the camera with her hips horizontally (for presets that travel, e.g.
+    ``walk``); framing is set on the first frame.
     """
     scene = bpy.context.scene
     start = scene.frame_start
     scene.frame_set(start)
     portrait(framing, resolution=resolution, post=post, pose=None, view_yaw=view_yaw)
-    configure_video(scene, out_path, fps or scene.render.fps)
-    bpy.ops.render.render(animation=True)
-    configure_still(scene, "")
-    scene.frame_set(start)
+    if follow:
+        follow_camera(scene)
+    try:
+        configure_video(scene, out_path, fps or scene.render.fps)
+        bpy.ops.render.render(animation=True)
+    finally:
+        configure_still(scene, "")
+        if follow:
+            remove_follow()
+        scene.frame_set(start)
     return out_path
+
+
+FOLLOW = "wg_follow"
+
+
+def follow_camera(scene: bpy.types.Scene) -> None:
+    """Parent ``wg_cam`` to a pivot keyed every frame to the hips' horizontal travel."""
+    from .character import character_armature
+    arm = character_armature()
+    cam = scene.camera
+    pivot = _ensure_object(FOLLOW, None, scene)
+    pivot.location = (0.0, 0.0, 0.0)
+    cam.parent = pivot
+    cam.matrix_parent_inverse = pivot.matrix_world.inverted()
+
+    def hips_xy():
+        h = arm.matrix_world @ arm.pose.bones["J_Bip_C_Hips"].head
+        return h.x, h.y
+    current = scene.frame_current
+    x0, y0 = hips_xy()                     # relative to the frame the camera was framed on
+    for f in range(scene.frame_start, scene.frame_end + 1):
+        scene.frame_set(f)
+        x, y = hips_xy()
+        pivot.location = (x - x0, y - y0, 0.0)
+        pivot.keyframe_insert("location", frame=f)
+    scene.frame_set(current)
+
+
+def remove_follow() -> None:
+    pivot = bpy.data.objects.get(FOLLOW)
+    if pivot is None:
+        return
+    for child in list(pivot.children):
+        world = child.matrix_world.copy()
+        child.parent = None
+        child.matrix_world = world
+    bpy.data.objects.remove(pivot, do_unlink=True)
 
 
 def remove_turntable() -> None:

@@ -3,9 +3,10 @@
 Target look: **modern stylized 3D anime, close to Zenless Zone Zero (HoYoverse).** It was derived
 from the images in `references/`.
 
-> The references are third-party copyrighted screenshots. Use them only as a **style** target:
-> no recreating those characters, names, logos or outfits, and no extracting game assets. Keep
-> `references/` out of version control.
+> The references are third-party copyrighted screenshots. Keep `references/` out of version
+> control. wo-gen is a personal project that is never distributed, so resemblance to existing
+> characters is fine, and third-party models you've obtained may be imported for personal use
+> (record them in `assets/LICENSES.md` as third-party).
 
 ## Shading
 
@@ -82,7 +83,7 @@ from the images in `references/`.
 |---|---|---|
 | Two-tone cel with a soft boundary, per-material shadow colors | ✅ | `toon.PROFILES` |
 | Warm skin / cool hair and cloth shadows | ✅ | `toon.PROFILES` |
-| Clean face shadows | 🟡 Workaround: no cast shadows plus a wide, low face ramp | `toon.PROFILE_OVERRIDES` |
+| Clean face shadows | ✅ Head-space ellipsoid normals on the face skin (no cast shadows) | `face_shading` |
 | Rim light tinted by the environment | 🟡 Directional; tinted from the surface color, not the environment | `toon._rim_factor` |
 | Painted specular on hair | ✅ From VroidStudio textures | — |
 | Colored per-material outlines | ✅ Inverted hull | `toon._add_outline` |

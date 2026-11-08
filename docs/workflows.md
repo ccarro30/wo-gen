@@ -5,7 +5,9 @@
 Specs are TOML in `specs/`. Any value can be a fixed value, a `[min, max]` range, or
 `{ choice = [...] }`; the seed resolves ranges and choices. Start from
 [specs/default.toml](../specs/default.toml) (everything random) or
-[specs/school_navy.toml](../specs/school_navy.toml) (fixed look).
+[specs/school_navy.toml](../specs/school_navy.toml) (fixed look). To start from a description
+in words instead, see [text-to-spec.md](text-to-spec.md). `uv run wogen check specs/x.toml`
+validates any spec strictly.
 
 ```toml
 version = 1
@@ -18,6 +20,7 @@ bust = [0.9, 1.15]       # shoulder_width hip_width waist thigh arm_thickness bu
 
 [face]                   # -1 .. 1
 eye_size = [0.2, 0.6]    # eye_size eye_height face_width chin_length
+brow_tilt = 0.3          # brow_height brow_tilt nose_size mouth_width
 
 [colors]                 # "#RRGGBB"; hair/eyes colorize, skin tints (keep it near white)
 hair = { choice = ["#1d1b26", "#f4b6c2"] }
@@ -81,7 +84,31 @@ palette's hair color and keeps its own spring chains, which are also exported to
 ## Clips
 
 `anim.sequence([(frame, pose, expression[, {"ground": False}]), ...])`, then `physics.bake()`
-and `render.clip(path)`. The CLI `clip` command uses `anim.PRESETS`; add new presets there.
+and `render.clip(path)` (`follow=True` for travel). The CLI `clip` command uses
+`wogen.motions.PRESETS`: add new presets there (plus `PRESET_OPTIONS` if it travels, spins or
+loops). Presets: `walk`, `run`, `spin`, `jump_for_joy`, `hop`, `wave_hello`, `blow_kiss`,
+`heart`, `bow`, `sway` (loops), `look_around`, and the seamless loops `walk_loop`, `run_loop`.
+Keyed feet are planted automatically between keys.
+
+- **Chains**: `--preset wave_hello,walk,spin,bow` plays presets in order with a 10-frame
+  transition; after a walk or run the rest happens where she stopped. From chat:
+  `opts = anim.preset("wave_hello,walk,bow")`, then bake with `opts` and render.
+- **Loops**: `walk_loop` / `run_loop` simulate several warm-up cycles and render only the last
+  one, with the spring keys closed onto the first frame, so the MP4 loops without a seam
+  (the follow camera keeps her in place). From chat: `physics.bake(...)`, then
+  `anim.loop_range(opts)` before `render.clip`.
+`clip`, `turntable` and `portrait` take `--seed N` (and `--spec S`) to use a generated
+character, e.g. `uv run wogen clip --seed 5 --preset hop --framing full`. Video sizes are
+rounded up to even numbers (H.264).
+
+## Motion capture
+
+`uv run wogen mocap` lists the clips; `uv run wogen clip --mocap dance --expression happy
+--framing full --out out\dance.mp4` renders one (`--start/--end` seconds to trim,
+`--in-place` to remove travel, `--no-clear` to skip the arm-vs-skirt pass, which costs about
+0.2 s per frame). From chat: `opts = mocap.apply("dance")`, then `physics.bake(...)` and
+`render.clip(..., follow=opts["follow"])`. To get more clips, see the motion capture section
+of [tooling.md](tooling.md).
 
 ## Export a character
 
@@ -103,7 +130,7 @@ then restart Blender and Claude Code. See [tooling.md](tooling.md).
 
 ## Run tests
 
-`uv run pytest` runs everything (106 tests, about 47 s). The 3 `blender`-marked tests launch
+`uv run pytest` runs everything (140 tests, about 55 s). The 3 `blender`-marked tests launch
 headless Blender (render test, portrait job with a hairstyle, clip job).
-`uv run pytest -m "not blender"` runs the 103 pure tests in under a second. Test temp files go
+`uv run pytest -m "not blender"` runs the 137 pure tests in under a second. Test temp files go
 to `.cache/pytest`.

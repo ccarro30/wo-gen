@@ -75,7 +75,24 @@ def _build_group(selection_mats: list[bpy.types.Material], over_mats: list[bpy.t
     gout.location = (800, 0)
     join = nodes.new("GeometryNodeJoinGeometry")
     join.location = (600, 0)
-    links.new(gin.outputs["Geometry"], join.inputs["Geometry"])
+    # Join Geometry drops custom normals (the face's baked shading normals): capture them per
+    # corner first and restore them as free normals on the joined result.
+    corner_normal = nodes.new("GeometryNodeInputNormal")
+    corner_normal.location = (-1400, 200)
+    capture = nodes.new("GeometryNodeCaptureAttribute")
+    capture.domain = "CORNER"
+    capture.location = (-1200, 150)
+    links.new(gin.outputs["Geometry"], capture.inputs[0])
+    capture.capture_items.new("VECTOR", "Normal")
+    links.new(corner_normal.outputs["Normal"], capture.inputs["Normal"])
+    source = capture.outputs[0]
+    links.new(source, join.inputs["Geometry"])
+    set_normal = nodes.new("GeometryNodeSetMeshNormal")
+    set_normal.mode = "FREE"
+    set_normal.domain = "CORNER"
+    set_normal.location = (750, 0)
+    links.new(join.outputs["Geometry"], set_normal.inputs["Mesh"])
+    links.new(capture.outputs["Normal"], set_normal.inputs["Custom Normal"])
 
     # Camera location in the modified object's space.
     cam = nodes.new("GeometryNodeInputActiveCamera")
@@ -132,7 +149,7 @@ def _build_group(selection_mats: list[bpy.types.Material], over_mats: list[bpy.t
         sep = nodes.new("GeometryNodeSeparateGeometry")
         sep.domain = "FACE"
         sep.location = (-200, y)
-        links.new(gin.outputs["Geometry"], sep.inputs["Geometry"])
+        links.new(source, sep.inputs["Geometry"])
         links.new(both.outputs[0], sep.inputs["Selection"])
         move = nodes.new("GeometryNodeSetPosition")
         move.location = (0, y)
@@ -144,7 +161,7 @@ def _build_group(selection_mats: list[bpy.types.Material], over_mats: list[bpy.t
         set_mat.inputs["Material"].default_value = over_mat
         links.new(set_mat.outputs["Geometry"], join.inputs["Geometry"])
 
-    links.new(join.outputs["Geometry"], gout.inputs["Geometry"])
+    links.new(set_normal.outputs[0], gout.inputs["Geometry"])
     return ng
 
 

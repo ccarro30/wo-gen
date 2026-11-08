@@ -1,0 +1,29 @@
+version = 1
+description = "tall, cool and elegant, long straight black hair, red eyes, dark wine-colored party dress"
+seed = 1
+
+[body]
+leg_length = [1.05, 1.1]
+torso_length = [1.01, 1.04]
+neck_length = [1.04, 1.1]
+head_scale = [0.93, 0.97]
+waist = [0.9, 0.94]
+thigh = [0.93, 0.97]
+bust = [0.95, 1.1]
+
+[face]
+eye_size = [-0.4, -0.1]
+chin_length = [0.2, 0.5]
+face_width = [-0.4, -0.1]
+
+[colors]
+hair = "#1d1b26"
+eyes = "#c0392b"
+skin = { choice = ["#ffffff", "#fff4ee"] }
+
+[hair]
+style = "hair_long_straight"
+
+[outfit]
+set = "red_dress"
+tint = { dress_red = "#5a1530", heels_red = "#5a1530" }

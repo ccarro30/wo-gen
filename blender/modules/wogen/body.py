@@ -27,7 +27,8 @@ BODY_RANGES: dict[str, tuple[float, float]] = {
     "arm_thickness": (0.90, 1.10),
     "bust": (0.80, 1.30),
 }
-FACE_KEYS = ("eye_size", "eye_height", "face_width", "chin_length")
+FACE_KEYS = ("eye_size", "eye_height", "face_width", "chin_length", "brow_height", "brow_tilt",
+             "nose_size", "mouth_width")
 
 # Height fractions of the base model (used by the heads-tall estimate).
 _FRACTIONS = {"leg_length": 0.48, "torso_length": 0.30, "neck_length": 0.05, "head_scale": 0.14}
@@ -58,6 +59,10 @@ class FaceParams:
     eye_height: float = 0.0
     face_width: float = 0.0
     chin_length: float = 0.0
+    brow_height: float = 0.0
+    brow_tilt: float = 0.0
+    nose_size: float = 0.0
+    mouth_width: float = 0.0
 
 
 @dataclass

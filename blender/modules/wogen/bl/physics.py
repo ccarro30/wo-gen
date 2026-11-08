@@ -51,6 +51,12 @@ class PhysicsSettings:
     # authored hairstyle isn't pushed out at rest (VroidStudio colliders are set up for the
     # T-pose; with arms down, hair tips already sit inside chest/arm spheres).
     rest_slack: bool = True
+    # Carry springs along with the hips' travel (0..1), like a VRM spring "center": at 1,
+    # walking forward causes no lag at all; a little below 1 keeps a hint of sway.
+    carry: float = 0.0
+    # Bakes add spheres along the legs, forearms and hands to every chain (slack measured on
+    # the T-pose), so skirts and hair are pushed by the limbs instead of pierced.
+    limb_colliders: bool = True
 
 
 @dataclass
@@ -213,6 +219,20 @@ def _step_spring(arm, spring: _Spring, dt: float, centers: list[tuple[Vector, fl
         parent_rest_q = j.rest_q
 
 
+def _rest_slack(arm, spring: _Spring, colliders, first: int) -> None:
+    """Slack for ``colliders`` (indices from ``first``) measured on the T-pose rest: limbs
+    are far from hair and skirts there, so overlaps that only happen in the clip's first
+    frame (hands resting inside a skirt) aren't allowed for the whole clip."""
+    for j in spring.joints:
+        tail = arm.data.bones[j.child].head_local
+        for k, ((bone, offset), radius) in enumerate(colliders):
+            dist = (tail - arm.data.bones[bone].matrix_local @ offset).length
+            if dist < radius + j.hit_radius:
+                j.allowed[first + k] = dist
+            else:
+                j.allowed.pop(first + k, None)
+
+
 def _compute_slack(arm, spring: _Spring, centers: list[tuple[Vector, float]]) -> None:
     """Record, per joint, colliders its rest-carried tail already penetrates (current pose)."""
     first = arm.pose.bones[spring.joints[0].bone]
@@ -243,7 +263,12 @@ def bake(settings: PhysicsSettings | None = None, frame_start: int | None = None
     end = scene.frame_end if frame_end is None else frame_end
     clear(arm)
     springs = _springs(arm, settings)
+    limbs = _limb_colliders(arm) if settings.limb_colliders else []
+    limb_from = {}
     for sp in springs:
+        if limbs:
+            limb_from[id(sp)] = len(sp.colliders)
+            sp.colliders = list(sp.colliders) + limbs
         for j in sp.joints:
             _init_joint(arm, j)
     to_arm = arm.matrix_world.inverted()
@@ -263,12 +288,24 @@ def bake(settings: PhysicsSettings | None = None, frame_start: int | None = None
     if settings.rest_slack:
         for sp in springs:
             _compute_slack(arm, sp, centers(sp))
+            if limbs:
+                _rest_slack(arm, sp, limbs, limb_from[id(sp)])
     for _ in range(settings.settle_frames):
         for sp in springs:
             _step_spring(arm, sp, dt, centers(sp), write=False)
     keyed = 0
+    hips = arm.pose.bones.get("J_Bip_C_Hips")
+    last_center = hips.head.copy() if hips is not None else None
     for frame in range(start, end + 1):
         scene.frame_set(frame)
+        if settings.carry and hips is not None:
+            shift = (hips.head - last_center) * settings.carry
+            last_center = hips.head.copy()
+            for sp in springs:
+                for j in sp.joints:
+                    if j.tail is not None:
+                        j.tail = j.tail + shift
+                        j.prev_tail = j.prev_tail + shift
         for sp in springs:
             cs = centers(sp)
             for s in range(settings.substeps):
@@ -279,3 +316,100 @@ def bake(settings: PhysicsSettings | None = None, frame_start: int | None = None
     scene.frame_set(start)
     return (f"baked {len(springs)} springs "
             f"({sum(len(s.joints) for s in springs)} joints) over frames {start}-{end}")
+
+
+LEG_COLLIDERS = (("upper_leg", 0.075, 6), ("lower_leg", 0.055, 4))   # (bone, radius, spheres)
+ARM_COLLIDERS = (("lower_arm", 0.035, 4), ("hand", 0.04, 2))
+
+
+def _leg_colliders(arm, specs=LEG_COLLIDERS) -> list[tuple[tuple[str, Vector], float]]:
+    """Spheres along each whole thigh and shin (bone-local offsets), for draping skirts.
+    VroidStudio's skirt colliders stop two-thirds down the thigh and skip the knee."""
+    from .pose import humanoid_map
+    hmap = humanoid_map(arm)
+    out = []
+    for side in ("left", "right"):
+        for name, radius, count in specs:
+            bone = hmap.get(f"{side}_{name}")
+            if bone is None:
+                continue
+            length = arm.data.bones[bone].length
+            for i in range(count):
+                out.append(((bone, Vector((0.0, length * i / (count - 1), 0.0))), radius))
+    return out
+
+
+def _limb_colliders(arm) -> list[tuple[tuple[str, Vector], float]]:
+    """Full-length leg spheres plus forearm and hand spheres, for bakes: hands push skirts
+    and hair aside instead of passing through them."""
+    return _leg_colliders(arm) + _leg_colliders(arm, ARM_COLLIDERS)
+
+
+def settle(steps: int = 48, settings: PhysicsSettings | None = None,
+           garments_only: bool = True) -> str:
+    """Drape skirts (garment spring chains) around the current static pose.
+
+    Stills never run a bake, so skirts keep their standing shape while thighs move through
+    them. This replays the move from the standing rest pose into the current pose over the
+    first two thirds of ``steps`` (so a rising thigh carries the skirt up and over instead of
+    piercing it), then holds, and writes the final spring rotations (no keys). Legs get
+    full-length colliders. Collider slack is measured on the standing rest pose.
+    Called by ``pose.apply_pose`` for unkeyed poses; clips use ``bake``.
+    """
+    from .character import character_armature
+    settings = settings or PhysicsSettings()
+    scene = bpy.context.scene
+    arm = character_armature()
+    springs = (_garment_springs(arm, settings) if garments_only else _springs(arm, settings))
+    if not springs:
+        return "no spring chains to settle"
+    legs = _leg_colliders(arm)
+    for sp in springs:
+        sp.colliders = list(sp.colliders) + legs
+        for j in sp.joints:
+            _init_joint(arm, j)
+    chain_bones = {j.bone for sp in springs for j in sp.joints}
+    target = {pb.name: pb.matrix_basis.copy() for pb in arm.pose.bones if pb.name not in chain_bones}
+    arm_z = arm.location.z
+
+    def centers(sp: _Spring):
+        out = []
+        for ref, r in sp.colliders:
+            if isinstance(ref, tuple):
+                bone, offset = ref
+                out.append((arm.pose.bones[bone].matrix @ offset, r))
+            else:
+                out.append((arm.matrix_world.inverted() @ ref.matrix_world.translation, r))
+        return out
+
+    parts = {name: m.decompose() for name, m in target.items()}
+
+    def blend(t: float) -> None:
+        for name, (loc, rot, scale) in parts.items():
+            if t >= 1.0:
+                arm.pose.bones[name].matrix_basis = target[name]
+                continue
+            q = Quaternion().slerp(rot, t)
+            arm.pose.bones[name].matrix_basis = Matrix.LocRotScale(
+                loc * t, q, Vector((1.0, 1.0, 1.0)).lerp(scale, t))
+        bpy.context.view_layer.update()
+
+    for pb in arm.pose.bones:
+        if pb.name in chain_bones:
+            pb.matrix_basis = Matrix.Identity(4)
+    blend(0.0)
+    if settings.rest_slack:
+        for sp in springs:
+            _compute_slack(arm, sp, centers(sp))
+    dt = 1.0 / (scene.render.fps / scene.render.fps_base)
+    ramp = max(1, steps * 2 // 3)
+    for i in range(steps):
+        t = min(1.0, (i + 1) / ramp)
+        if i < ramp:
+            blend(t * t * (3 - 2 * t))
+        for sp in springs:
+            _step_spring(arm, sp, dt, centers(sp), write=(i == steps - 1))
+    blend(1.0)
+    arm.location.z = arm_z
+    bpy.context.view_layer.update()
+    return f"settled {len(springs)} chains over {steps} steps"

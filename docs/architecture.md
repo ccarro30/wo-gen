@@ -23,6 +23,8 @@
    face keys, recoloring, and a harvested garment library.
 2. **Deterministic.** A character is fully described by spec + seed + asset library. All
    randomness happens while resolving the spec (`wogen.spec`), never inside Blender operations.
+   Each value draws from its own stream seeded by (seed, key path), so adding settings to a
+   spec never changes the other values a seed produces.
 3. **Headless is the source of truth.** Every feature is a plain function in `wogen.bl`,
    reachable from a headless job (`wogen.bl.jobs`) and from MCP. MCP never runs logic that
    isn't in the package.
@@ -42,8 +44,11 @@ Pure modules (no `bpy`, unit-tested):
 | `spec` | TOML specs; seeded resolution of `[min, max]` ranges and `{choice = [...]}` |
 | `body` | Body/face/palette parameters, ranges, adult-proportion rule, spec → params |
 | `poses` | Pose format, mirroring, hand shapes, IK entries, library, TOML save/load |
+| `bvh` | BVH parser, mocap clip catalog (`assets/mocap/manifest.json`), CMU → humanoid bone map |
+| `motions` | Motion presets and generators (turn, hop, spin, sway, walk, run, loops), chains, per-preset clip options |
 | `expressions` | Expression presets over VroidStudio `Fcl_*` face keys |
 | `garments` | VroidStudio material-name parsing, slots/conflicts, skeleton comparison, naming |
+| `catalog` | What a spec can contain (from the ranges + garment index), strict `check`, TOML writer, `save_spec` |
 | `paths`, `launcher`, `cli` | Paths/Blender discovery, headless job launcher, command line |
 
 Blender modules (`wogen.bl`):
@@ -53,13 +58,15 @@ Blender modules (`wogen.bl`):
 | `character` | VRM import into the `wogen_character` collection, cleanup, `prepare()` |
 | `toon` | Cel materials (per class: skin/hair/cloth/eye/face), outlines, rim, recolor rules |
 | `overlay` | Brows (and optional lash lines) drawn through the bangs |
+| `face_shading` | Anime face shadows: ellipsoid normals on the face skin, rotated with the head |
 | `body` | Rest-pose retargeting for body params; garment/rig fitting; procedural face keys |
 | `outfit` | Split Body into garments, hidden-skin mask, recolor/layers, library save/equip, harvest, sets, names |
 | `hair` | Hairstyle modules: build from an export's hair, harvest, strip the base hair, equip |
 | `garment_rig` | Secondary bones + spring chains + colliders carried by garments |
 | `face` | Expressions and gaze |
-| `pose` | Applying poses (FK + analytic two-bone IK), saving poses, grounding (with shoe lift) |
-| `anim` | Keyed sequences and presets (layered-action F-curve helpers) |
+| `pose` | Applying poses (FK + analytic two-bone IK), saving poses, grounding (with shoe lift), thumb solver |
+| `clearance` | Moves forearms/hands out of skirts and dresses after posing |
+| `anim` | Keys sequences (layered-action F-curve helpers), per-frame foot planting |
 | `physics` | VRM SpringBone 1.0 solver, baked to keyframes (character + garment chains) |
 | `render` | Portrait camera/lights/world, turntable, clips, contact sheets |
 | `post` | Compositor: bloom, chromatic aberration, grade, vignette |
@@ -86,18 +93,31 @@ Blender modules (`wogen.bl`):
    inverted-hull Solidify using per-material `wgo_` colors.
 5. **Overlay**: a geometry-nodes copy of the brows, moved toward the camera along each view
    ray, so it draws over the bangs at the same screen position.
-6. **Face keys**: procedural `wg_eye_size`, `wg_eye_height`, `wg_face_width`, `wg_chin_length`.
-7. **Outfit split**: VroidStudio merges clothing into `Body` as full-body *shells* in stacked
+6. **Face shading** (`bl/face_shading.py`, right after the body retarget): the face skin
+   shades with the normals of an ellipsoid fitted to the face, leaned toward the face's
+   forward direction, so the shadow sweeps in cleanly from the side instead of breaking up
+   on the nose and lips.
+   - Baked into the mesh's custom normals (what export keeps).
+   - For rendering, the `wg_face_normals` geometry-nodes modifier (after the armature) sets
+     them again from rest-space attributes, rotated by `wg_head_frame` (an empty on the head
+     bone). Surface-relative normals would tilt with every shape key and leave patches.
+   - The brows-through-hair overlay captures and restores normals around its Join Geometry,
+     which would otherwise drop them.
+7. **Face keys**: procedural `wg_eye_size`, `wg_eye_height`, `wg_face_width`,
+   `wg_chin_length`, `wg_brow_height`, `wg_brow_tilt`, `wg_nose_size`, `wg_mouth_width`.
+   Expression keys are rescaled around the eyes to match `eye_size`
+   (`body.scale_expressions_to_eyes`), so blinks close fully on big eyes, also in export.
+8. **Outfit split**: VroidStudio merges clothing into `Body` as full-body *shells* in stacked
    alpha-cut texture layers.
    - Faces transparent in their layer are pruned, and each item becomes a `Garment_*`
      object.
    - Skin under opaque cloth is masked (alpha sampled at the exact surface point).
-8. **Outfit set / extra garments / hairstyle** from the library. On equip, each garment is
+9. **Outfit set / extra garments / hairstyle** from the library. On equip, each garment is
    fitted to the body, its rig bones are installed, MToon is re-enabled, and the hidden skin
    is recomputed (hair never hides skin). The first hairstyle equipped removes the base hair
    (`hair.strip_base`: meshes, Body's HairBack faces, hair spring chains, `J_Sec_Hair*`
    bones).
-9. **Palette**: hair/iris *colorize* (texture luminance remapped onto a target color, keeping
+10. **Palette**: hair/iris *colorize* (texture luminance remapped onto a target color, keeping
    the painted shading), brows follow the hair, and skin gets a tint.
 
 Generated characters carry `wg_generated` (resolved spec + params) on the armature.
@@ -131,19 +151,59 @@ Generated characters carry `wg_generated` (resolved spec + params) on the armatu
   - IK entries place hands/feet at anchors (`<bone>` posed head, or `rest:<bone>` floor spot),
     with a pole and an optional end orientation.
   - Feet are solved before hands, then grounded (plus shoe lift).
+  - **Garment clearance** (`clearance.py`, on by default in `apply_pose`): forearm/hand
+    samples below the waist are tested against the posed skirts/dresses (a radial ray that
+    exits the cloth = inside; or within 2 cm). Free arms rotate out about the shoulder in 2°
+    steps (≤ 30°); IK hands move their target outward and re-solve (≤ 12 cm). Cloth weighted
+    to the arm bones (cuffs, armholes) is ignored, and passes repeat until nothing moves.
+  - **Skirt settle** (`physics.settle`, unkeyed poses only): replays the move from the
+    standing rest pose into the pose over ~32 steps while garment spring chains simulate
+    against full-length thigh/shin colliders (slack measured standing), so a rising thigh
+    lifts the skirt. Runs before clearance, so arms clear the draped skirt. Clips bake instead.
+  - **Hand shapes**: finger curls, plus solved thumbs (relaxed, peace, fist, point).
+    `pose.solve_thumb(curls, over=[fingers])` searches thumb angles by forward kinematics so
+    the tip rests on the curled fingers; use it for new hand shapes instead of guessing.
 - **Animation**: `anim.sequence` keys library poses/expressions at frames (Blender 5 layered
   actions; F-curves reached through `anim_utils.action_get_channelbag_for_slot`).
+  - **Foot planting**: after keying, foot IK is re-solved on every in-between frame. A foot
+    whose target is the same in two keys stays locked (< 2 mm drift in the walk); a foot that
+    moves along the floor follows an eased, lifted arc. Leg bones are keyed per frame.
+  - **Presets** (`motions.py`, pure): keys built from library poses and generators. A spin
+    rotates the hips bone (not the object), keyed every 90° so quaternion interpolation
+    takes the intended way round; springs feel the turn. The walk alternates passing and
+    contact keys with heel strike/toe-off, arm swing and hip/chest twist; the run adds a
+    flight key (`ground: False`) and tucks the swing heel.
+  - **Chains** (`motions.chain`, via `motions.build("a,b")`): presets offset in time with a
+    gap, a trailing hold dropped; after a `travel` preset, later poses are shifted (hips and
+    `rest:` foot targets) to where she stopped. Options merge (any follow, max carry/substeps).
+  - **Quaternion continuity**: after keying, keys in the opposite hemisphere from the
+    previous key are negated, so 360° → 0° doesn't play a reverse spin.
+  - **Clip options** (`PRESET_OPTIONS`): `follow` keys a camera pivot to the hips' travel;
+    `carry` moves spring chains with the hips (like a VRM spring center) so walking doesn't
+    stream the hair back; `substeps` for fast spins; `loop` = cycle length. Loop presets key
+    several identical cycles; after the bake, `anim.loop_range` narrows the scene to the last
+    cycle and spreads each spring curve's leftover end/start difference linearly over it.
 - **Physics**: the VRM SpringBone 1.0 algorithm (inertia/drag, stiffness toward the
   parent-carried rest direction, gravity, sphere collisions), stepped per frame in armature
   space and baked to keys.
   - `rest_slack` lets each joint keep the collider overlap it starts with, so VroidStudio's
     T-pose colliders don't push the authored hair out when the arms are down.
+  - `limb_colliders` (default on) adds spheres along the legs, forearms and hands to every
+    chain, with their slack measured on the T-pose, so hands push skirts and hair aside.
+- **Mocap** (`bvh.py` pure parser + catalog; `bl/mocap.py`): CMU BVH frame 0 is a T-pose, as
+  is our rest. Per mapped joint the motion is the world rotation relative to that frame,
+  converted from BVH axes (Y up, facing +Z) to ours and applied over the bone's rest:
+  `basis = rest⁻¹ · D_parent⁻¹ · D · rest`. Hips travel is scaled by hip-height ratio, the
+  clip is turned to face the camera, a floor pass drops it so contacts land on the floor
+  (5th percentile of the lowest foot), and `clearance.clear_arms` runs per frame.
 
 ## Rendering
 
 EEVEE only for the toon look (`Shader to RGB`); Standard view transform; key sun without cast
 shadows (clean anime faces) plus a cool rim sun; a world that shows the background only to
-camera rays. `render.portrait` frames face/bust/full from the posed head with optional yaw.
+camera rays. `render.portrait` frames face/bust from the posed head; full fits the posed
+bounds of every visible character mesh at the render aspect (sitting/crouching stay in
+frame); optional yaw.
 Turntables orbit the camera on a frame-driven pivot; clips render the scene's animation to
 H.264 MP4. The compositor group (`post.py`) adds bloom, chromatic aberration, grade and vignette.
 
@@ -151,7 +211,8 @@ H.264 MP4. The compositor group (`post.py`) adds bloom, chromatic aberration, gr
 
 `export_character(path)` saves the scene to `.cache/tmp/…` and runs the `export` job on that
 copy. `prepare()` then works destructively on the copy:
-- drops animation, overlay and outline/mask modifiers;
+- drops animation, overlay, face-normal and outline/mask modifiers (the face keeps its baked
+  normals);
 - bakes the `wg_*` face keys into every key block;
 - deletes hidden skin and unworn garments;
 - restores MToon, with recolors baked into new packed textures;

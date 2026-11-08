@@ -9,3 +9,5 @@
 *.png   filter=lfs diff=lfs merge=lfs -text
 *.jpg   filter=lfs diff=lfs merge=lfs -text
 *.mp4   filter=lfs diff=lfs merge=lfs -text
+# Motion capture (large text files, fetched by scripts/update-mocap.ps1)
+*.bvh   filter=lfs diff=lfs merge=lfs -text

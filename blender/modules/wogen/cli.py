@@ -8,6 +8,7 @@ and the in-Blender job share one definition of each option (``wogen <job> --help
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -57,6 +58,37 @@ def _cmd_resolve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_catalog(args: argparse.Namespace) -> int:
+    from .catalog import catalog
+    print(json.dumps(catalog(), indent=2))
+    return 0
+
+
+def _cmd_mocap(args: argparse.Namespace) -> int:
+    from .bvh import catalog
+    clips = catalog()
+    missing = 0
+    for name, entry in clips.items():
+        mark = "  " if entry["available"] else "! "
+        missing += not entry["available"]
+        print(f"{mark}{name:14s} {entry['description']}")
+    if missing:
+        print(f"{missing} clip(s) not downloaded (!): run scripts\\update-mocap.ps1")
+    print("Use: wogen clip --mocap NAME [--start S] [--end S] [--in-place]")
+    return 0
+
+
+def _cmd_check(args: argparse.Namespace) -> int:
+    from .catalog import check
+    errors, warnings = check(spec_mod.load_spec(args.spec))
+    for e in errors:
+        print("ERROR  ", e)
+    for w in warnings:
+        print("warning", w)
+    print("OK" if not errors else f"{len(errors)} error(s)")
+    return 1 if errors else 0
+
+
 def _cmd_export(args: argparse.Namespace) -> int:
     blend = Path(args.blend).resolve()
     if not blend.is_file():
@@ -91,6 +123,17 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=lambda a: run_job("harvest", *a.names, "--reference", a.reference,
                                           *(["--fresh"] if a.fresh else []),
                                           *(["--only", a.only] if a.only else [])))
+
+    p = sub.add_parser("catalog", help="Print what a spec can contain (ranges, hairstyles, "
+                                       "outfit sets, garments) as JSON")
+    p.set_defaults(func=_cmd_catalog)
+
+    p = sub.add_parser("mocap", help="List the motion-capture clips (assets/mocap/manifest.json)")
+    p.set_defaults(func=_cmd_mocap)
+
+    p = sub.add_parser("check", help="Strictly check a spec (unknown keys, ranges, asset names)")
+    p.add_argument("spec")
+    p.set_defaults(func=_cmd_check)
 
     p = sub.add_parser("resolve", help="Resolve a TOML spec with a seed and print JSON")
     p.add_argument("spec")

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "name": "CMU Graphics Lab Motion Capture Database, BVH conversion by Bruce Hahne (cgspeed, 2010)",
+    "repo": "una-dinosauria/cmu-mocap",
+    "commit": "09a07f54f3bbb58797325f009282d0b2048a2871",
+    "license": "CMU: free for use in research and commercial projects worldwide (READMEFIRST.txt in the source repo). Credit: mocap.cs.cmu.edu, NSF EIA-0196217.",
+    "index": "cmu-mocap-index-text.txt in the source repo lists every motion with a description"
+  },
+  "clips": {
+    "walk":        {"file": "data/007/07_01.bvh", "description": "walk"},
+    "happy_walk":  {"file": "data/082/82_12.bvh", "description": "happy or fast walk forward"},
+    "jog":         {"file": "data/016/16_35.bvh", "description": "run/jog"},
+    "forward_jump":{"file": "data/013/13_11.bvh", "description": "forward jump"},
+    "very_happy":  {"file": "data/079/79_69.bvh", "description": "very happy (charades)"},
+    "happy":       {"file": "data/080/80_43.bvh", "description": "happy (charades)"},
+    "dance":       {"file": "data/005/05_02.bvh", "description": "modern dance - expressive arms, pirouette"},
+    "salsa":       {"file": "data/060/60_01.bvh", "description": "salsa dance"},
+    "stretch":     {"file": "data/042/42_01.bvh", "description": "stretch - rotate head, shoulders, arms, legs"},
+    "sit_chin":    {"file": "data/013/13_04.bvh", "description": "sit on stepstool, chin in hand"},
+    "vignettes":   {"file": "data/056/56_07.bvh", "description": "yawn, stretch, walk, run/jog, angrily grab, jump, skip, halt"}
+  }
+}

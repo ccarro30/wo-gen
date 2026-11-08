@@ -1,0 +1,29 @@
+version = 1
+description = "short, teal ponytails, blue eyes, long black dress, medium breasts, larger thighs"
+seed = 1
+
+[body]
+leg_length = [0.95, 0.98]
+torso_length = [0.96, 0.99]
+arm_length = 0.97
+head_scale = [0.96, 0.99]
+bust = [0.98, 1.05]
+thigh = [1.06, 1.12]
+hip_width = [1.02, 1.06]
+
+[face]
+eye_size = [0.0, 0.5]
+face_width = [-0.2, 0.2]
+chin_length = [-0.2, 0.2]
+
+[colors]
+hair = "#2a9d8f"
+eyes = "#5ab0ff"
+skin = { choice = ["#ffffff", "#fff4ee", "#f6e2d6"] }
+
+[hair]
+style = "hair_twintails"
+
+[outfit]
+set = "red_dress"
+tint = { dress_red = "#1d1b26", heels_red = "#1d1b26" }

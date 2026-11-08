@@ -230,6 +230,8 @@ def prepare(name: str | None = None) -> list[str]:
     arm.location = (0.0, 0.0, 0.0)
     face = face_mesh()
     overlay.remove(face)
+    from . import face_shading
+    face_shading.strip(face)     # the baked custom normals stay
     for g in list(outfit.garments()):
         if g.hide_render:
             bpy.data.objects.remove(g, do_unlink=True)

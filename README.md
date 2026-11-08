@@ -10,10 +10,10 @@ See [docs/roadmap.md](docs/roadmap.md) for what's done, known issues and next st
 
 | | |
 |---|---|
-| Generate | 11 body + 4 face parameters, 8 hairstyles, hair/eye/skin palette, outfit sets with mix-and-match and per-layer tints; adult-proportion rule enforced |
+| Generate | 11 body + 8 face parameters (eyes, face shape, brows, nose, mouth), 8 hairstyles, hair/eye/skin palette, outfit sets with mix-and-match and per-layer tints; adult-proportion rule enforced |
 | Look | EEVEE cel shading (ZZZ-like), colored outlines, brows through bangs, bloom/grade |
-| Pose | 14 poses (arm + leg IK), 22 expressions, gaze, props, saved custom poses |
-| Motion | Keyed motion presets, VRM spring-bone physics for hair and skirts, MP4 clips/turntables |
+| Pose | 19 poses (arm + leg IK), 22 expressions, gaze, props, saved custom poses; arms kept out of skirts |
+| Motion | Keyed motion presets, chains and loops, BVH motion capture (CMU clips), VRM spring-bone physics for hair and skirts, MP4 clips/turntables |
 | Output | PNG, MP4, `.blend`, VRM 1.0 (MToon + springs), FBX |
 
 ## Quick start
@@ -38,19 +38,25 @@ lists every option.
 |---|---|
 | `generate --spec S --seed N` | Seeded character → portrait. `--pose`, `--expression`, `--framing face\|bust\|full`, `--view-yaw`, `--save-blend F`, `--export F.vrm\|F.fbx` (repeatable) |
 | `variants --seeds 1-8` | Contact sheet of seeds from a spec |
-| `portrait` | Base character portrait (`--framing face\|bust\|full`). Character options below |
-| `turntable` | 360° MP4 of the base character |
-| `clip --preset look_around\|hop\|wave_hello` | Keyed motion + baked physics → MP4 (`--no-physics`) |
+| `portrait` | Portrait of the base or a generated character (`--framing face\|bust\|full`). Character options below |
+| `turntable` | 360° MP4 |
+| `clip --preset NAME` | Keyed motion + baked physics → MP4 (`--no-physics`). Presets: `walk`, `run`, `spin`, `jump_for_joy`, `hop`, `wave_hello`, `blow_kiss`, `heart`, `bow`, `sway`, `look_around`; seamless loops `walk_loop`, `run_loop`; chain with commas (`wave_hello,walk,bow`) |
+| `clip --mocap NAME` | Motion capture retargeted onto the character → MP4 (`--start/--end` seconds, `--in-place`). `mocap` lists the clips; `scripts\update-mocap.ps1` fetches them |
 | `outfit-sheet` | Every outfit set on the base character |
 | `hair-sheet` | Every hairstyle, front and back (`--outfit SET`, `--framing`) |
 | `export F.blend --out F.vrm\|F.fbx` | Export the character in a saved scene (repeatable `--out`; the `.blend` isn't changed) |
 | `harvest [--fresh] [--only garments\|hair]` | Extract garments (from `base_f01*.vrm`) and hairstyles (from `base_f01_hair*.vrm` + `base_f01`) into the library |
 | `resolve SPEC --seed N` | Print a resolved spec as JSON (no Blender) |
+| `catalog` | Print what a spec can contain: slider ranges, hairstyles, outfit sets, garments (no Blender) |
+| `check SPEC` | Strictly check a spec: unknown keys, out-of-range values, unknown asset names (no Blender) |
 | `render-test` | Smoke test of headless EEVEE |
 
-Character options (`portrait`, `turntable`, `clip`): `--base`, `--pose NAME[,NAME]`,
-`--expression`, `--hair STYLE`, `--outfit SET`, `--equip G`, `--unequip SLOT|G`, `--tint G=#hex`,
-`--seat HEIGHT`, `--view-yaw DEG`, `--through-hair brow[,eyeline]`, `--no-post`.
+Character options (`portrait`, `turntable`, `clip`): `--spec S` / `--seed N` (generate the
+character; without them it's the plain base), `--base`, `--pose NAME[,NAME]`, `--expression`,
+`--hair STYLE`, `--outfit SET`, `--equip G`, `--unequip SLOT|G`, `--tint G=#hex`,
+`--seat HEIGHT`, `--view-yaw DEG`, `--through-hair brow[,eyeline]`, `--no-post`. With a seed,
+the other options override what the spec chose, e.g.
+`uv run wogen clip --seed 5 --preset hop --hair hair_bob`.
 
 ## Chat (Blender MCP)
 
@@ -97,7 +103,8 @@ references/              style references (copyrighted; gitignored)
 - All generated characters are adults: proportions are clamped to ≥ 6.6 heads tall.
 - Generation is reproducible: same spec + seed + asset library → same character.
 - The headless pipeline is the source of truth; MCP is an interactive layer on top of it.
-- Style references are a *style* target only: no recreating existing characters or assets.
+- Personal project, never distributed: resemblance to existing characters is fine, and
+  third-party models may be imported for personal use (recorded in `assets/LICENSES.md`).
 
 ## Documentation
 
@@ -105,6 +112,7 @@ references/              style references (copyrighted; gitignored)
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | How it works: pipeline, modules, data, key techniques |
 | [docs/workflows.md](docs/workflows.md) | How-tos: specs, garments, poses, exporting, MCP updates |
+| [docs/text-to-spec.md](docs/text-to-spec.md) | Describe a character in words → spec, in chat (vocabulary, process, rules) |
 | [docs/roadmap.md](docs/roadmap.md) | Status by phase, known issues, decisions, next steps |
 | [docs/tooling.md](docs/tooling.md) | Installed tools, versions, MCP setup, dev workflow |
 | [docs/style-guide.md](docs/style-guide.md) | Target look and how far each element is implemented |

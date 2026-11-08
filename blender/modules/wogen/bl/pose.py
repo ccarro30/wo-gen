@@ -59,9 +59,12 @@ def reset_pose(armature: bpy.types.Object | None = None) -> None:
 
 
 def apply_pose(spec: PoseSpec = "a_pose", reset: bool = True, frame: int | None = None,
-               ground: bool = True, armature: bpy.types.Object | None = None) -> Pose:
+               ground: bool = True, armature: bpy.types.Object | None = None,
+               clear: bool = True, settle: bool = True) -> Pose:
     """Apply a pose. ``reset`` clears other bones first (eyes keep their gaze);
-    ``frame`` keyframes the posed bones; ``ground`` keeps the feet on the floor."""
+    ``frame`` keyframes the posed bones; ``ground`` keeps the feet on the floor; ``clear``
+    moves arms out of skirts and dresses (``wogen.bl.clearance``); ``settle`` drapes skirts
+    around the legs for unkeyed (still) poses (``physics.settle``; clips bake instead)."""
     arm = _armature(armature)
     pose = resolve_pose(spec, POSES_DIR)
     hmap = humanoid_map(arm)
@@ -92,11 +95,21 @@ def apply_pose(spec: PoseSpec = "a_pose", reset: bool = True, frame: int | None 
         pb.location = _rest_rotation(pb.bone).inverted() @ Vector(hips_offset)
     bpy.context.view_layer.update()
     # Feet first (they follow the hips), then hands (which may target knees).
+    hand_targets = {}
     for chain in sorted(iks, key=lambda c: (not c.endswith("_foot"), c)):
         entry = iks[chain]
         anchor = _anchor(arm, hmap, entry["target"])
         orient = entry.get("orient", (0.0, 0.0, 0.0) if chain.endswith("_foot") else None)
-        reach(chain, anchor + Vector(entry["offset"]), entry["pole"], arm, hmap, orient)
+        target = anchor + Vector(entry["offset"])
+        reach(chain, target, entry["pole"], arm, hmap, orient)
+        if chain.endswith("_hand"):
+            hand_targets[chain.removesuffix("_hand")] = (target, entry["pole"], orient)
+    if settle and frame is None:              # drape skirts first, then clear arms from them
+        from .physics import settle as settle_skirts
+        settle_skirts()
+    if clear:
+        from .clearance import clear_arms
+        clear_arms(arm, hmap, hand_targets)
     if ground:
         ground_feet(arm)
     if frame is not None:
@@ -105,6 +118,7 @@ def apply_pose(spec: PoseSpec = "a_pose", reset: bool = True, frame: int | None 
         keyed = {n for n in hmap if n not in ("left_eye", "right_eye")} if reset else set(rotations)
         for chain in iks:
             keyed |= set(CHAIN_BONES[chain])
+        keyed |= {"left_upper_arm", "right_upper_arm"} & set(hmap)   # clearance may move them
         for name in keyed:
             arm.pose.bones[hmap[name]].rotation_mode = "QUATERNION"
             arm.pose.bones[hmap[name]].keyframe_insert("rotation_quaternion", frame=frame)
@@ -245,3 +259,71 @@ def relax_arms(armature: bpy.types.Object | None = None, degrees: float = 68.0) 
     """Back-compat helper: A-pose arms."""
     apply_pose({"left_upper_arm": (0, degrees, 0), "right_upper_arm": (0, -degrees, 0)},
                reset=False, armature=armature)
+
+
+def solve_thumb(curls: dict[str, tuple[float, float, float]], over: list[str],
+                armature: bpy.types.Object | None = None, samples: int = 6000,
+                seed: int = 1, palm: float = 0.012, segment: int = 1,
+                along: float = 0.5) -> tuple[tuple[int, int, int], ...]:
+    """Solve a folded thumb for a hand shape: eulers (left-side convention, as in
+    ``wogen.poses.hand(thumb=...)``) that rest the thumb tip on the palm side of the middle
+    segments of the curled fingers in ``over`` (e.g. ``["ring"]`` for a peace sign).
+    ``palm`` is how far below the finger (toward the palm) the tip rests; ``segment``
+    (0 proximal, 1 intermediate) and ``along`` (0..1) pick the spot on the finger. A relaxed
+    hand uses ``over=["index"], segment=0, along=0.8, palm=0.018`` (tip beside the index).
+
+    Forward kinematics from the rest matrices (no scene changes): random search, then
+    coordinate descent. Penalizes large angles and the thumb passing the back of the hand.
+    """
+    import random
+    arm = _armature(armature)
+    hmap = humanoid_map(arm)
+    bones = arm.data.bones
+    rest = {n: bones[hmap[n]].matrix_local for n in hmap if n.startswith("left_")}
+
+    def basis(n, e):
+        r = rest[n].to_quaternion()
+        q = r.inverted() @ Euler([math.radians(a) for a in e], "XYZ").to_quaternion() @ r
+        return q.to_matrix().to_4x4()
+
+    def chain(names, eulers):
+        m, prev, out = rest["left_hand"], "left_hand", []
+        for n, e in zip(names, eulers):
+            m = m @ (rest[prev].inverted() @ rest[n]) @ basis(n, e)
+            out.append(m)
+            prev = n
+        return out
+
+    def middle_of(finger):
+        segs = [f"left_{finger}_{s}" for s in ("proximal", "intermediate", "distal")]
+        m = chain(segs, [(0.0, a, 0.0) for a in curls[finger]])[segment]
+        return m @ Vector((0.0, bones[hmap[segs[segment]]].length * along, 0.0))
+    palm_down = Vector((0.0, 0.0, -palm))      # T-pose palms face down
+    target = sum((middle_of(f) for f in over), Vector()) / len(over) + palm_down
+    back_z = rest["left_hand"].translation.z + 0.005
+    thumb = [f"left_thumb_{s}" for s in ("metacarpal", "proximal", "distal")]
+    tip_len = bones[hmap[thumb[2]]].length
+
+    def cost(p):
+        ms = chain(thumb, [p[0:3], p[3:6], (0.0, p[6], p[7])])
+        tip = ms[2] @ Vector((0.0, tip_len, 0.0))
+        joints = [m.translation for m in ms] + [tip]
+        through = sum(max(0.0, j.z - back_z) for j in joints)
+        return (tip - target).length + 2.0 * through + 0.00008 * sum(abs(a) for a in p)
+
+    rng = random.Random(seed)
+    best_p = min(([rng.uniform(-60, 60) for _ in range(8)] for _ in range(samples)), key=cost)
+    best_c, step = cost(best_p), 8.0
+    while step > 0.25:
+        improved = False
+        for i in range(8):
+            for d in (-step, step):
+                q = list(best_p)
+                q[i] = max(-90.0, min(90.0, q[i] + d))
+                c = cost(q)
+                if c < best_c:
+                    best_p, best_c, improved = q, c, True
+        if not improved:
+            step /= 2
+    p = [round(x) for x in best_p]
+    return (tuple(p[0:3]), tuple(p[3:6]), (0, p[6], p[7]))

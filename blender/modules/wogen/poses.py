@@ -118,17 +118,25 @@ def both(left: Pose) -> Pose:
 
 
 def hand(side: str, curls: dict[str, tuple[float, float, float]],
-         spread: dict[str, float] | None = None) -> Pose:
-    """Hand shape for ``side`` ('left'/'right'): per-finger curl of each segment (degrees)."""
+         spread: dict[str, float] | None = None,
+         thumb: tuple[Euler, Euler, Euler] | None = None) -> Pose:
+    """Hand shape for ``side`` ('left'/'right'): per-finger curl of each segment (degrees).
+
+    ``thumb`` gives explicit eulers (left-side convention) for the metacarpal, proximal and
+    distal segments and overrides any thumb curl. A thumb that folds across the palm can't be
+    expressed as a single curl angle; solve it with ``wogen.bl.pose.solve_thumb``.
+    """
     pose: Pose = {}
     for finger, angles in curls.items():
         for seg, angle in zip(FINGER_SEGMENTS[finger], angles):
             spread_z = (spread or {}).get(finger, 0.0) if seg in ("metacarpal", "proximal") else 0.0
             if finger == "thumb":
-                # Thumb curls across the palm: about the forward axis.
-                pose[f"left_{finger}_{seg}"] = (0.0, angle * 0.5, -angle)
+                pose[f"left_{finger}_{seg}"] = (0.0, angle * 0.5, -angle)   # small curls only
             else:
                 pose[f"left_{finger}_{seg}"] = (0.0, angle, spread_z)
+    if thumb is not None:
+        for seg, e in zip(FINGER_SEGMENTS["thumb"], thumb):
+            pose[f"left_thumb_{seg}"] = tuple(e)
     return pose if side == "left" else mirror(pose)
 
 
@@ -142,16 +150,22 @@ def merge(*poses: Pose) -> Pose:
 
 # ---------------------------------------------------------------- hand shapes
 
+# Folded thumbs were solved with wogen.bl.pose.solve_thumb on base_f01 (thumb tip resting on
+# the palm side of the named curled fingers' middle segments); they hold for generated bodies.
 HANDS = {
-    "relaxed": dict(curls={"thumb": (5, 10, 10), "index": (8, 12, 8), "middle": (12, 16, 10),
-                           "ring": (15, 18, 12), "little": (18, 20, 14)}),
-    "fist": dict(curls={"thumb": (25, 35, 30), "index": (75, 95, 60), "middle": (80, 95, 60),
-                        "ring": (80, 95, 60), "little": (80, 95, 60)}),
-    "peace": dict(curls={"thumb": (25, 35, 30), "index": (0, 0, 0), "middle": (0, 0, 0),
+    "relaxed": dict(curls={"index": (10, 18, 10), "middle": (15, 22, 12),
+                           "ring": (18, 25, 14), "little": (22, 28, 16)},
+                    thumb=((0, 9, 13), (0, 0, 52), (0, 0, 0))),               # along the index
+    "fist": dict(curls={"index": (75, 95, 60), "middle": (80, 95, 60),
+                        "ring": (80, 95, 60), "little": (80, 95, 60)},
+                 thumb=((11, -1, -1), (90, -4, 56), (0, 7, 4))),          # over index + middle
+    "peace": dict(curls={"index": (0, 0, 0), "middle": (0, 0, 0),
                          "ring": (80, 95, 60), "little": (80, 95, 60)},
-                  spread={"index": -8, "middle": 8}),
-    "point": dict(curls={"thumb": (20, 30, 25), "index": (0, 0, 0), "middle": (80, 95, 60),
-                         "ring": (80, 95, 60), "little": (80, 95, 60)}),
+                  spread={"index": -8, "middle": 8},
+                  thumb=((-8, -3, 30), (56, -14, 78), (0, 21, 6))),       # over the ring finger
+    "point": dict(curls={"index": (0, 0, 0), "middle": (80, 95, 60),
+                         "ring": (80, 95, 60), "little": (80, 95, 60)},
+                  thumb=((21, 0, -1), (90, -6, 70), (0, 7, 15))),         # over the middle finger
     "open": dict(curls={"thumb": (0, 0, 0), "index": (0, 0, 0), "middle": (0, 0, 0),
                         "ring": (0, 0, 0), "little": (0, 0, 0)},
                  spread={"index": -8, "middle": -2, "ring": 4, "little": 10}),
@@ -208,6 +222,34 @@ POSES: dict[str, Pose] = {
         ik("left", "spine", (-0.06, -0.15, 0.04), (1.0, 0.0, -1.0)),
         ik("right", "head", (-0.02, -0.11, -0.08), (-0.6, 0.2, -1.0)),
         {"head": (4, -6, -6)},
+    ),
+    # ---- expressive upper body (used by the motion presets; fine as stills too)
+    "bow": merge(   # polite bow, hands together in front
+        RELAXED_HANDS,
+        both(ik("left", "hips", (0.03, -0.17, -0.12), (1.0, 0.3, -0.5))),
+        {"hips": (16, 0, 0), "spine": (10, 0, 0), "chest": (6, 0, 0), "neck": (4, 0, 0),
+         "head": (6, 0, 0), HIPS_LOCATION: (0.0, 0.06, -0.01)},   # hinge at the hips
+        plant("left"), plant("right"),
+    ),
+    "cheer": merge(   # both arms up, open hands
+        hand_shape("open", "left"), hand_shape("open", "right"),
+        both({"left_upper_arm": (0, -55, -8), "left_lower_arm": (0, 0, -20)}),
+        {"chest": (-6, 0, 0), "neck": (-4, 0, 0), "head": (-6, 0, 0)},
+    ),
+    "heart_arms": merge(   # arms form a heart over the head, fingertips touching
+        hand_shape("relaxed", "left"), hand_shape("relaxed", "right"),
+        both(ik("left", "head", (0.07, 0.0, 0.23), (1.0, 0.3, 0.6))),
+        {"head": (0, 6, 0), "spine": (0, 2, 0)},
+    ),
+    "kiss_hand": merge(   # fingertips of her right hand at her lips
+        ARMS_DOWN, hand_shape("relaxed", "left"), hand_shape("relaxed", "right"),
+        ik("right", "head", (-0.02, -0.12, -0.06), (-0.6, 0.3, -1.0)),
+        {"head": (2, -4, 0)},
+    ),
+    "kiss_blow": merge(   # ...then thrown toward the viewer
+        ARMS_DOWN, hand_shape("relaxed", "left"), hand_shape("open", "right"),
+        ik("right", "upper_chest", (-0.05, -0.44, 0.10), (-1.0, 0.0, -0.4)),
+        {"head": (0, -6, -4), "chest": (0, 0, -6)},
     ),
     # ---- lower body (feet planted with IK; hips_location moves the body)
     "contrapposto": merge(   # weight on her right leg, left knee relaxed

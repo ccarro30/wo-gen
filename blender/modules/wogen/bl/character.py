@@ -35,6 +35,8 @@ def prepare(name: str = "base_f01", through_hair: list[str] | None = ("brow",),
     ensure_vrm_addon()
     clear_default_scene()
     armature = import_base(name)
+    from .face_shading import setup_face_normals
+    setup_face_normals(armature=armature)
     toon.apply_toon()
     if through_hair:
         overlay.features_through_hair(list(through_hair))

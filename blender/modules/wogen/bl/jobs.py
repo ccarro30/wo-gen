@@ -17,7 +17,11 @@ def _job_args() -> list[str]:
 
 
 def _character_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--base", default="base_f01")
+    p.add_argument("--spec", default=None,
+                   help="generate the character from this spec (TOML) instead of the plain base")
+    p.add_argument("--seed", type=int, default=None,
+                   help="generate with this seed (implies --spec specs/default.toml)")
+    p.add_argument("--base", default=None, help="base export (default: the spec's, or base_f01)")
     p.add_argument("--expression", default="neutral")
     p.add_argument("--pose", default="idle",
                    help="library pose name, or comma-separated names merged left to right")
@@ -46,9 +50,20 @@ def _pose_spec(args: argparse.Namespace):
 
 
 def _prepare(args: argparse.Namespace) -> None:
+    """Build the character: the plain base, or a generated one (--spec/--seed). The other
+    character options (outfit, hair, tints, ...) then apply on top as overrides."""
     from . import character, face
     features = [f for f in args.through_hair.split(",") if f]
-    character.prepare(args.base, through_hair=features or None)
+    if args.spec or args.seed is not None:
+        from . import generate
+        params = generate.generate(args.spec or "specs/default.toml", args.seed, base=args.base,
+                                   through_hair=tuple(features))
+        for note in params.notes:
+            print("[generate]", note)
+        print(f"[generate] seed {generate.describe().get('seed')}: outfit={params.outfit}, "
+              f"hair={params.hair or 'base'}")
+    else:
+        character.prepare(args.base or "base_f01", through_hair=features or None)
     face.expression(args.expression)
     if args.outfit or args.equip or args.unequip or args.tint:
         from . import outfit
@@ -104,20 +119,40 @@ def _clip(argv: list[str]) -> None:
     from . import anim, physics, render
     p = argparse.ArgumentParser(prog="clip")
     _character_args(p)
-    p.add_argument("--preset", default="look_around", choices=sorted(anim.PRESETS))
+    p.add_argument("--preset", default="look_around",
+                   help=f"one of {', '.join(sorted(anim.PRESETS))}, or several joined by "
+                        "commas (played in order with transitions)")
     p.add_argument("--framing", choices=["face", "bust", "full"], default="bust")
     p.add_argument("--fps", type=int, default=24)
     p.add_argument("--width", type=int, default=1080)
     p.add_argument("--height", type=int, default=1350)
     p.add_argument("--no-physics", action="store_true")
+    p.add_argument("--mocap", default=None, help="motion-capture clip instead of a preset "
+                   "('wogen mocap' lists them), or a .bvh path")
+    p.add_argument("--start", type=float, default=0.0, help="mocap: start time (seconds)")
+    p.add_argument("--end", type=float, default=None, help="mocap: end time (seconds)")
+    p.add_argument("--in-place", action="store_true", help="mocap: remove horizontal travel")
+    p.add_argument("--no-clear", action="store_true",
+                   help="mocap: don't keep arms out of skirts (faster)")
     p.add_argument("--out", required=True)
     args = p.parse_args(argv)
-    _prepare(args)
-    anim.preset(args.preset, args.fps)
+    if args.mocap:
+        from .. import bvh
+        from . import mocap
+        bvh.clip_path(args.mocap)      # fail on unknown/missing clips before the slow setup
+        _prepare(args)
+        opts = mocap.apply(args.mocap, args.start, args.end, args.fps, in_place=args.in_place,
+                           expression=args.expression, clear=not args.no_clear)
+    else:
+        anim.build(args.preset)        # fail on unknown presets before the slow setup
+        _prepare(args)
+        opts = anim.preset(args.preset, args.fps)
     if not args.no_physics:
-        print(physics.bake())
+        print(physics.bake(physics.PhysicsSettings(substeps=opts.get("substeps", 1),
+                                                   carry=opts.get("carry", 0.0))))
+    anim.loop_range(opts)
     render.clip(args.out, args.framing, (args.width, args.height), post=not args.no_post,
-                view_yaw=args.view_yaw, fps=args.fps)
+                view_yaw=args.view_yaw, fps=args.fps, follow=opts.get("follow", False))
 
 
 def _harvest(argv: list[str]) -> None:

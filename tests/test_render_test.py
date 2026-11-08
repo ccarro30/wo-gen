@@ -29,9 +29,10 @@ def test_render_test_writes_png(tmp_path):
 @pytest.mark.blender
 @needs_blender
 @needs_base
-def test_clip_job_bakes_physics_and_writes_mp4(tmp_path):
+def test_clip_job_of_generated_character_writes_mp4(tmp_path):
     out = tmp_path / "clip.mp4"
-    args = ["clip", "--preset", "hop", "--width", "128", "--height", "160", "--out", str(out)]
+    args = ["clip", "--seed", "5", "--preset", "hop", "--width", "128", "--height", "159",
+            "--out", str(out)]                      # odd height: rounded up for H.264
     assert cli.main(args) == 0
     data = out.read_bytes()
     assert len(data) > 1000 and b"ftyp" in data[:64]   # MP4 container header

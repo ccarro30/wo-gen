@@ -23,6 +23,10 @@ eye_size = [-0.4, 0.8]
 eye_height = [-0.5, 0.5]
 face_width = [-0.6, 0.4]
 chin_length = [-0.5, 0.5]
+brow_height = [-0.4, 0.4]
+brow_tilt = [-0.5, 0.5]
+nose_size = [-0.6, 0.3]
+mouth_width = [-0.4, 0.4]
 
 [colors]
 hair = { choice = ["#3b2a2a", "#1d1b26", "#f4b6c2", "#ff6a4d", "#e8e4f2", "#2f4f9a", "#c9a46b", "#9b6bd6"] }

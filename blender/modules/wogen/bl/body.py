@@ -247,41 +247,64 @@ def _smoothstep(e0: float, e1: float, x: np.ndarray) -> np.ndarray:
     return t * t * (3 - 2 * t)
 
 
-def build_face_keys(face: bpy.types.Object) -> list[str]:
-    """Create procedural ``wg_*`` face shape keys (idempotent). Values -1..1."""
-    from . import toon
-    me = face.data
-    if me.shape_keys is None:
-        face.shape_key_add(name="Basis", from_mix=False)
-    keys = me.shape_keys.key_blocks
-    basis = np.empty(len(me.vertices) * 3, dtype=np.float32)
-    keys[0].data.foreach_get("co", basis)
-    co = basis.reshape(-1, 3).astype(np.float64)
+EYE_SCALE = 0.16            # wg_eye_size = 1 scales the eye region by 16 %
+EYE_FIX_KEY = "wg_eye_size_applied"
 
-    mats = [toon._source_of(m).name if m else "" for m in me.materials]
+
+def _eye_falloff(co: np.ndarray, c: np.ndarray, eye_r: float) -> np.ndarray:
+    r = np.linalg.norm((co - c)[:, [0, 2]], axis=1)
+    front = (co[:, 1] < c[1] + 0.03).astype(np.float64)   # front of the head only
+    # Fade out toward the midline so the two eyes never push the nose bridge across it.
+    midline = _smoothstep(0.0, 0.6 * abs(c[0]), np.abs(co[:, 0]))
+    return (1.0 - _smoothstep(eye_r * 1.05, eye_r * 1.9, r)) * front * midline
+
+
+def _face_basis(face: bpy.types.Object):
+    me = face.data
+    basis = np.empty(len(me.vertices) * 3, dtype=np.float32)
+    me.shape_keys.key_blocks[0].data.foreach_get("co", basis)
+    return basis.reshape(-1, 3).astype(np.float64)
+
+
+def _eye_geometry(face: bpy.types.Object, co: np.ndarray, mats: list[str]):
+    """(eye centres by side, eye radius) from the eye materials' vertices."""
+    me = face.data
     eye_slots = {i for i, n in enumerate(mats) if any(e in n for e in FACE_EYE_MATERIALS)}
     eye_verts = sorted({v for p in me.polygons if p.material_index in eye_slots for v in p.vertices})
     e = co[eye_verts]
     centers = {s: e[(e[:, 0] > 0) == (s > 0)].mean(axis=0) for s in (1, -1)}
     left_eye = e[e[:, 0] > 0]
     eye_r = float(((left_eye.max(axis=0) - left_eye.min(axis=0)) / 2)[[0, 2]].max())
+    return centers, eye_r
+
+
+def _material_names(face: bpy.types.Object) -> list[str]:
+    from . import toon
+    return [toon._source_of(m).name if m else "" for m in face.data.materials]
+
+
+def build_face_keys(face: bpy.types.Object) -> list[str]:
+    """Create procedural ``wg_*`` face shape keys (idempotent). Values -1..1."""
+    me = face.data
+    if me.shape_keys is None:
+        face.shape_key_add(name="Basis", from_mix=False)
+    keys = me.shape_keys.key_blocks
+    co = _face_basis(face)
+    mats = _material_names(face)
+    centers, eye_r = _eye_geometry(face, co, mats)
     eye_z = float((centers[1][2] + centers[-1][2]) / 2)
     chin_z = float(co[:, 2].min())
     mouth_z = eye_z + 0.70 * (chin_z - eye_z)
 
     def eye_falloff(c):
-        r = np.linalg.norm((co - c)[:, [0, 2]], axis=1)
-        front = (co[:, 1] < c[1] + 0.03).astype(np.float64)   # front of the head only
-        # Fade out toward the midline so the two eyes never push the nose bridge across it.
-        midline = _smoothstep(0.0, 0.6 * abs(c[0]), np.abs(co[:, 0]))
-        return (1.0 - _smoothstep(eye_r * 1.05, eye_r * 1.9, r)) * front * midline
+        return _eye_falloff(co, c, eye_r)
 
     shapes: dict[str, np.ndarray] = {}
     d = np.zeros_like(co)
     for s in (1, -1):
         c = centers[s]
         side = (co[:, 0] > 0) == (s > 0)
-        d += ((co - c) * 0.16) * (eye_falloff(c) * side)[:, None]
+        d += ((co - c) * EYE_SCALE) * (eye_falloff(c) * side)[:, None]
     shapes["wg_eye_size"] = d
     d = np.zeros_like(co)
     for s in (1, -1):
@@ -297,11 +320,86 @@ def build_face_keys(face: bpy.types.Object) -> list[str]:
     d[:, 2] = -0.010 * chin
     shapes["wg_chin_length"] = d
 
+    # Brows: only the brow faces move (they're drawn over the skin and through the bangs).
+    brow_slots = {i for i, n in enumerate(mats) if "FaceBrow" in n}
+    brow = np.zeros(len(co), bool)
+    brow[sorted({v for p in me.polygons if p.material_index in brow_slots for v in p.vertices})] = True
+    d = np.zeros_like(co)
+    d[brow, 2] = 0.006
+    shapes["wg_brow_height"] = d
+    d = np.zeros_like(co)     # + raises the outer ends (sharper), - the inner ends (softer)
+    for s in (1, -1):
+        side = brow & ((co[:, 0] > 0) == (s > 0))
+        if side.any():
+            cx = co[side, 0].mean()
+            d[side, 2] = 0.22 * (co[side, 0] - cx) * s
+    shapes["wg_brow_tilt"] = d
+
+    # Nose: scale the skin around the nose tip (the frontmost skin point between eyes and mouth).
+    skin_slots = {i for i, n in enumerate(mats) if n.endswith("_SKIN") or "_SKIN." in n}
+    skin = np.zeros(len(co), bool)
+    skin[sorted({v for p in me.polygons if p.material_index in skin_slots for v in p.vertices})] = True
+    band = skin & (co[:, 2] > mouth_z) & (co[:, 2] < eye_z) & (np.abs(co[:, 0]) < 0.3 * eye_r + 0.01)
+    tip = co[band][np.argmin(co[band, 1])] if band.any() else np.array([0.0, co[:, 1].min(), mouth_z])
+    pivot = tip + np.array([0.0, 0.012, 0.005])          # behind and slightly above the tip
+    r = np.linalg.norm((co - pivot) / np.array([1.0, 1.0, 0.8]), axis=1)
+    d = (co - pivot) * (0.40 * (1.0 - _smoothstep(0.008, 0.017, r)) * skin)[:, None]
+    shapes["wg_nose_size"] = d
+
+    # Mouth: widen the mouth (inside and lips) and the skin around it, sideways only.
+    mouth_slots = {i for i, n in enumerate(mats) if "FaceMouth" in n}
+    mouth_v = sorted({v for p in me.polygons if p.material_index in mouth_slots for v in p.vertices})
+    if mouth_v:
+        m = co[mouth_v]
+        mc = np.array([0.0, m[:, 1].min(), (m[:, 2].min() + m[:, 2].max()) / 2])
+        half_w = float(np.abs(m[:, 0]).max())
+        r = np.hypot(co[:, 0] / (half_w * 1.6), (co[:, 2] - mc[2]) / (half_w * 0.9))
+        # Front only: the mouth interior reaches back near the cheek skin and would poke out.
+        front = 1.0 - _smoothstep(mc[1] + 0.006, mc[1] + 0.018, co[:, 1])
+        d = np.zeros_like(co)
+        d[:, 0] = co[:, 0] * 0.18 * (1.0 - _smoothstep(0.7, 1.0, r)) * front
+        shapes["wg_mouth_width"] = d
+
     for name, delta in shapes.items():
         kb = keys.get(name) or face.shape_key_add(name=name, from_mix=False)
         kb.slider_min, kb.slider_max = -1.0, 1.0
         kb.data.foreach_set("co", (co + delta).astype(np.float32).ravel())
     return list(shapes)
+
+
+def scale_expressions_to_eyes(face: bpy.types.Object, eye_size: float) -> int:
+    """Scale the expression keys' deltas around the eyes to match ``wg_eye_size``.
+
+    ``wg_eye_size`` enlarges the eye region about each eye's centre by (1 + k), so a blink
+    delta authored for the base eye must grow by the same factor to close the lids fully.
+    The applied value is stored on the mesh, so repeated calls rescale exactly. Returns the
+    number of keys changed.
+    """
+    me = face.data
+    old = float(me.get(EYE_FIX_KEY, 0.0))
+    if abs(old - eye_size) < 1e-9:
+        return 0
+    co = _face_basis(face)
+    centers, eye_r = _eye_geometry(face, co, _material_names(face))
+    k = np.zeros(len(co))
+    for s in (1, -1):
+        side = (co[:, 0] > 0) == (s > 0)
+        k += EYE_SCALE * _eye_falloff(co, centers[s], eye_r) * side
+    ratio = ((1.0 + k * eye_size) / (1.0 + k * old))[:, None]
+    region = k > 1e-6
+    tmp = np.empty(len(co) * 3, dtype=np.float32)
+    changed = 0
+    for kb in me.shape_keys.key_blocks[1:]:
+        if kb.name.startswith("wg_"):
+            continue
+        kb.data.foreach_get("co", tmp)
+        delta = tmp.reshape(-1, 3).astype(np.float64) - co
+        if not np.abs(delta[region]).max(initial=0.0) > 1e-7:
+            continue
+        kb.data.foreach_set("co", (co + delta * ratio).astype(np.float32).ravel())
+        changed += 1
+    me[EYE_FIX_KEY] = eye_size
+    return changed
 
 
 def apply_face(params: FaceParams) -> str:
@@ -311,4 +409,5 @@ def apply_face(params: FaceParams) -> str:
     keys = face.data.shape_keys.key_blocks
     for name in names:
         keys[name].value = getattr(params, name.removeprefix("wg_"))
+    scale_expressions_to_eyes(face, params.eye_size)
     return "face: " + ", ".join(f"{n.removeprefix('wg_')}={keys[n].value:+.2f}" for n in names)

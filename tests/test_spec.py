@@ -45,3 +45,13 @@ def test_load_spec_roundtrip(tmp_path):
     p.write_text('version = 1\nseed = 3\n[body]\nheight_cm = [158, 168]\n', encoding="utf-8")
     r = s.resolve(s.load_spec(p))
     assert r["seed"] == 3 and 158 <= r["body"]["height_cm"] <= 168
+
+
+def test_adding_keys_keeps_other_values():
+    base = {"face": {"eye_size": [-1.0, 1.0]}, "colors": {"hair": {"choice": ["a", "b", "c", "d"]}}}
+    more = {"face": {"brow_tilt": [-1.0, 1.0], "eye_size": [-1.0, 1.0]},
+            "body": {"bust": [0.8, 1.3]}, "colors": {"hair": {"choice": ["a", "b", "c", "d"]}}}
+    for seed in range(20):
+        a, b = s.resolve(base, seed), s.resolve(more, seed)
+        assert a["face"]["eye_size"] == b["face"]["eye_size"]
+        assert a["colors"]["hair"] == b["colors"]["hair"]

@@ -75,6 +75,8 @@ def generate(spec="specs/default.toml", seed: int | None = None, base: str | Non
     with contextlib.redirect_stdout(io.StringIO()):
         character.import_base(base)
     params.notes.append(body.apply_body(params.body))
+    from .face_shading import setup_face_normals
+    setup_face_normals()
     toon.apply_toon()
     if through_hair:
         overlay.features_through_hair(list(through_hair))

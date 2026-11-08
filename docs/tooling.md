@@ -39,6 +39,29 @@ halves.
   Asset/generator integrations (Poly Haven, Sketchfab, Hyper3D, …) are off.
 - The add-on runs arbitrary Python in Blender: use it with trusted prompts only.
 
+## Motion capture clips (pinned)
+
+BVH clips from the CMU Graphics Lab Motion Capture Database (Bruce Hahne's 2010 BVH
+conversion), via the GitHub mirror `una-dinosauria/cmu-mocap` at a pinned commit. Data only:
+nothing is installed.
+
+| What | Location |
+|---|---|
+| Clip list + pinned source commit | `assets/mocap/manifest.json` (`name -> file`) |
+| Downloaded clips | `assets/mocap/cmu/*.bvh` (Git LFS) |
+| Lock (commit + SHA-256 of each file) | `assets/mocap/cmu/LOCK` |
+
+- **Get / repair:** `.\scripts\update-mocap.ps1`. It downloads missing clips, re-downloads
+  any whose hash no longer matches the lock, removes clips the manifest no longer lists, and
+  rewrites the lock. A no-op when everything is present.
+- **Add a clip:** find it in the source's index (`cmu-mocap-index-text.txt` in the repo, about
+  2,500 motions with descriptions), add `"name": {"file": "data/NNN/NN_MM.bvh", "description":
+  "..."}` to the manifest, rerun the script. `uv run wogen mocap` lists what's available.
+- **Move to a newer source commit:** change `source.commit` in the manifest and rerun; a
+  changed commit re-downloads everything.
+- **Terms:** CMU: "free for use in research and commercial projects worldwide"; credit
+  mocap.cs.cmu.edu (also recorded in `assets/LICENSES.md`).
+
 ## Dev workflow
 
 - `uv run wogen <command>` launches Blender as

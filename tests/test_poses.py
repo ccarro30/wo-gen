@@ -89,3 +89,19 @@ def test_saved_poses_resolve_by_name(tmp_path):
     (tmp_path / "mine.toml").write_text(P.dump_pose({"head": (5, 0, 0)}), encoding="utf-8")
     assert "mine" in P.list_poses(tmp_path)
     assert P.resolve_pose("mine", tmp_path) == {"head": (5.0, 0.0, 0.0)}
+
+
+def test_explicit_thumb_overrides_curl_and_mirrors():
+    from wogen import poses as P
+    left = P.hand("left", {"index": (0, 0, 0)}, thumb=((1, 2, 3), (4, 5, 6), (0, 7, 8)))
+    assert left["left_thumb_metacarpal"] == (1, 2, 3) and left["left_thumb_distal"] == (0, 7, 8)
+    right = P.hand("right", {"index": (0, 0, 0)}, thumb=((1, 2, 3), (4, 5, 6), (0, 7, 8)))
+    assert right["right_thumb_proximal"] == (4, -5, -6)
+
+
+def test_folded_thumb_shapes_use_solved_thumbs():
+    from wogen import poses as P
+    for shape in ("relaxed", "peace", "fist", "point"):
+        assert "thumb" in P.HANDS[shape] and "thumb" not in P.HANDS[shape]["curls"]
+    peace = P.hand_shape("peace", "right")
+    assert peace["right_thumb_proximal"] == P.mirror_euler(P.HANDS["peace"]["thumb"][1])
