@@ -71,7 +71,7 @@ def sequence(keys: list[tuple], fps: int = 24, plant_feet: bool = True) -> tuple
         frame, pose_spec = key[0], key[1]
         options = key[3] if len(key) > 3 else {}
         pose = apply_pose(pose_spec, frame=frame, **options)
-        feet.append((frame, _foot_targets(arm, hmap, pose)))
+        feet.append((frame, _foot_targets(arm, hmap, pose, options.get("ground", True))))
         if len(key) > 2 and key[2] is not None:
             expression(key[2], frame=frame)
     if plant_feet:
@@ -113,18 +113,41 @@ def _quaternion_continuity(arm) -> int:
     return flipped
 
 
-def _foot_targets(arm, hmap, pose) -> dict:
-    """``{chain: (target, pole, orient)}`` (armature space) for the IK feet of a key."""
+FLOOR_FOOT = 0.03       # m: an FK foot this close to its standing height counts as planted
+
+
+def _foot_targets(arm, hmap, pose, grounded: bool = True) -> dict:
+    """``{chain: (target, pole, orient)}`` (armature space) for the feet of a key: IK feet as
+    authored, and (grounded keys) FK feet standing on the floor where they are, so the foot
+    pass keeps them still between keys instead of letting them drift with the hips."""
+    import math
+
     from mathutils import Vector
 
     from ..poses import IK_PREFIX
+    from .outfit import shoe_lift
     from .pose import _anchor
     out = {}
+    lift = shoe_lift()
     for chain in ("left_foot", "right_foot"):
         entry = pose.get(IK_PREFIX + chain)
         if entry is not None:
             target = _anchor(arm, hmap, entry["target"]) + Vector(entry["offset"])
             out[chain] = (target, entry["pole"], entry.get("orient", (0.0, 0.0, 0.0)))
+            continue
+        if not grounded:
+            continue
+        side = chain.removesuffix("_foot")
+        foot = arm.pose.bones[hmap[chain]]
+        world_z = (arm.matrix_world @ foot.head).z
+        if world_z - (foot.bone.head_local.z + lift) > FLOOR_FOOT:
+            continue
+        hip = arm.pose.bones[hmap[f"{side}_upper_leg"]].head
+        knee = arm.pose.bones[hmap[f"{side}_lower_leg"]].head
+        line = (foot.head - hip).normalized()
+        pole = tuple((knee - hip) - line * (knee - hip).dot(line))
+        delta = foot.matrix.to_quaternion() @ foot.bone.matrix_local.to_quaternion().inverted()
+        out[chain] = (foot.head.copy(), pole, tuple(math.degrees(a) for a in delta.to_euler("XYZ")))
     return out
 
 
@@ -166,10 +189,111 @@ def _plant_pass(arm, hmap, feet: list[tuple[int, dict]]) -> int:
 def preset(name: str, fps: int = 24) -> dict:
     """Key a preset, or a chain like ``"wave_hello,spin,bow"``. Returns its clip options
     (``follow``, ``carry``, ``substeps``, ``loop``; see ``wogen.motions.PRESET_OPTIONS``)."""
+    from ..motions import parse_chain
+    segments = parse_chain(name)
+    if any(s[0] == "mocap" for s in segments):
+        return _mixed_chain(segments, fps)
     keys, options = build(name)
     clear()
     sequence(keys, fps)
     return options
+
+
+def _mixed_chain(segments: list[tuple], fps: int = 24, expression: str = "smile_soft") -> dict:
+    """Presets and mocap clips in one action: each part starts ``STEP_GAP`` frames after the
+    previous one ends, where she stands then (mocap clips also turn to face the camera);
+    the feet step across each transition (``_step_transition``)."""
+    from ..motions import (MOCAP_OPTIONS, drop_trailing_hold, end_root,
+                           merge_options, placed)
+    from . import mocap
+    from .character import character_armature
+    clear()
+    scene = bpy.context.scene
+    scene.render.fps = fps
+    end, root, options = 0, (0.0, 0.0), {}
+    boundaries = []
+    for i, seg in enumerate(segments):
+        start = end + STEP_GAP if end else 1
+        if end:
+            boundaries.append((end, start))
+        last = i == len(segments) - 1
+        if seg[0] == "preset":
+            name = seg[1]
+            keys = PRESETS[name]()
+            if not last:
+                drop_trailing_hold(keys)
+            keys = placed(keys, start, root)
+            sequence(keys, fps)
+            end = keys[-1][0]
+            opts = PRESET_OPTIONS.get(name, {})
+            if opts.get("travel"):
+                root = end_root(keys)
+        else:
+            _, clip, start_s, end_s = seg
+            end, root = mocap.segment(clip, start, root, start_s, end_s, fps,
+                                      expression=expression)
+            opts = MOCAP_OPTIONS
+        options = merge_options(options, opts)
+    arm = character_armature()
+    _quaternion_continuity(arm)
+    for f0, f1 in boundaries:
+        _step_transition(arm, f0, f1)
+    scene.frame_start, scene.frame_end = 1, end
+    scene.frame_set(1)
+    return options
+
+
+STEP_GAP = 14            # frames between parts of a mixed chain: room for a step with each foot
+STEP_HOLD = 0.02         # m: a foot that moves less than this across a transition just holds
+
+
+def _step_transition(arm, f0: int, f1: int) -> None:
+    """Between two chain parts, move each foot from where part A leaves it to where part B
+    wants it by stepping (lifted arc, one foot after the other) instead of sliding both
+    along the floor. Keys the leg bones on the in-between frames."""
+    import math
+
+    from mathutils import Vector
+
+    from .pose import CHAIN_BONES, humanoid_map, reach
+    hmap = humanoid_map(arm)
+    scene = bpy.context.scene
+    pb = arm.pose.bones
+
+    def foot_state(f):
+        scene.frame_set(f)
+        out = {}
+        for side in ("left", "right"):
+            foot = pb[hmap[f"{side}_foot"]]
+            out[side] = (foot.head.copy(), foot.matrix.to_quaternion())
+        return out
+
+    a, b = foot_state(f0), foot_state(f1)
+    moves = {s: (b[s][0] - a[s][0]).length for s in a}
+    order = sorted((s for s in moves if moves[s] > STEP_HOLD), key=lambda s: -moves[s])
+    windows = {s: (0.0, 1.0) for s in a}            # holding feet blend over the whole gap
+    if len(order) == 2:
+        windows[order[0]], windows[order[1]] = (0.0, 0.6), (0.4, 1.0)
+    rest = {s: pb[hmap[f"{s}_foot"]].bone.matrix_local.to_quaternion() for s in a}
+    for f in range(f0 + 1, f1):
+        u = (f - f0) / (f1 - f0)
+        scene.frame_set(f)
+        for side in ("left", "right"):
+            w0, w1 = windows[side]
+            t = min(1.0, max(0.0, (u - w0) / (w1 - w0)))
+            e = t * t * (3 - 2 * t)
+            (pa, qa), (pb_, qb) = a[side], b[side]
+            target = pa.lerp(pb_, e)
+            if side in order:                        # a real step: lift the foot on the way
+                target = target + Vector((0.0, 0.0, 4 * t * (1 - t) * min(0.06, moves[side] * 0.3)))
+            hip = pb[hmap[f"{side}_upper_leg"]].head
+            knee = pb[hmap[f"{side}_lower_leg"]].head
+            line = (target - hip).normalized()
+            pole = (knee - hip) - line * (knee - hip).dot(line)
+            delta = (qa.slerp(qb, e) @ rest[side].inverted()).to_euler("XYZ")
+            reach(f"{side}_foot", target, pole, arm, hmap, [math.degrees(x) for x in delta])
+            for name in CHAIN_BONES[f"{side}_foot"]:
+                pb[hmap[name]].keyframe_insert("rotation_quaternion", frame=f)
 
 
 def loop_range(options: dict) -> tuple[int, int] | None:

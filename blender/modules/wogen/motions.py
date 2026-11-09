@@ -271,30 +271,93 @@ def chain(names: list[str], gap: int = CHAIN_GAP) -> tuple[list[tuple], dict]:
         opts = PRESET_OPTIONS.get(name, {})
         if "loop" in opts:
             raise ValueError(f"{name} is a loop and can't be part of a chain")
-        part = PRESETS[name]()
-        if len(keys) > 1 and keys[-1][1:] == keys[-2][1:]:
-            keys.pop()
-        offset = keys[-1][0] + gap - part[0][0] if keys else 0
-        for key in part:
-            pose = shift(key[1], *root) if root != (0.0, 0.0) else key[1]
-            keys.append((key[0] + offset, pose, *key[2:]))
+        if len(keys) > 1:
+            drop_trailing_hold(keys)
+        part = placed(PRESETS[name](), keys[-1][0] + gap if keys else part_start(name), root)
+        keys += part
         if opts.get("travel"):
-            hips = resolve_pose(keys[-1][1], POSES_DIR).get(HIPS_LOCATION, (0.0, 0.0, 0.0))
-            root = (hips[0], hips[1])
-        for k, v in opts.items():
-            if k in ("follow", "travel"):
-                options[k] = options.get(k, False) or v
-            else:                                   # carry, substeps: the larger wins
-                options[k] = max(options.get(k, 0), v)
+            root = end_root(part)
+        options = merge_options(options, opts)
     return keys, options
 
 
+def part_start(name: str) -> int:
+    return PRESETS[name]()[0][0]
+
+
+def placed(part: list[tuple], start: int, root: tuple[float, float]) -> list[tuple]:
+    """A preset's keys moved in time (first key at ``start``) and along the floor (``root``)."""
+    offset = start - part[0][0]
+    return [(k[0] + offset, shift(k[1], *root) if root != (0.0, 0.0) else k[1], *k[2:])
+            for k in part]
+
+
+def drop_trailing_hold(keys: list[tuple]) -> None:
+    """Drop the last key if it only holds the one before (so the next part starts moving)."""
+    if len(keys) > 1 and keys[-1][1:] == keys[-2][1:]:
+        keys.pop()
+
+
+def end_root(keys: list[tuple]) -> tuple[float, float]:
+    """Where the last key leaves her on the floor (the hips' horizontal offset)."""
+    hips = resolve_pose(keys[-1][1], POSES_DIR).get(HIPS_LOCATION, (0.0, 0.0, 0.0))
+    return (hips[0], hips[1])
+
+
+def merge_options(options: dict, opts: dict) -> dict:
+    """Clip options of a chain: follow/travel if any part needs it; the larger carry/substeps."""
+    out = dict(options)
+    for k, v in opts.items():
+        if k in ("follow", "travel"):
+            out[k] = out.get(k, False) or v
+        elif k != "loop":
+            out[k] = max(out.get(k, 0), v)
+    return out
+
+
+MOCAP_PREFIX = "mocap:"
+MOCAP_OPTIONS = {"follow": True, "carry": 0.85, "substeps": 2, "travel": True}
+
+
+def parse_chain(name: str) -> list[tuple]:
+    """Chain tokens -> segments: ``("preset", name)`` or ``("mocap", clip, start_s, end_s)``.
+
+    Mocap tokens are ``mocap:CLIP`` or ``mocap:CLIP@START-END`` (seconds; either side may be
+    empty), e.g. ``"wave_hello,mocap:happy_walk,bow"`` or ``"mocap:salsa@2-6"``.
+    """
+    segments = []
+    tokens = [t.strip() for t in name.split(",") if t.strip()]
+    if not tokens:
+        raise KeyError(f"No preset given; choose from {sorted(PRESETS)}")
+    for token in tokens:
+        if token.startswith(MOCAP_PREFIX):
+            clip, _, span = token[len(MOCAP_PREFIX):].partition("@")
+            start_s, end_s = 0.0, None
+            if span:
+                a, sep, b = span.partition("-")
+                if not sep:
+                    raise ValueError(f"{token}: trim with @START-END seconds, e.g. @2-6")
+                start_s, end_s = float(a or 0.0), (float(b) if b else None)
+            if not clip:
+                raise ValueError(f"{token}: missing clip name")
+            segments.append(("mocap", clip, start_s, end_s))
+        elif token in PRESETS:
+            if "loop" in PRESET_OPTIONS.get(token, {}) and len(tokens) > 1:
+                raise ValueError(f"{token} is a loop and can't be part of a chain")
+            segments.append(("preset", token))
+        else:
+            raise KeyError(f"Unknown preset {token!r}; choose from {sorted(PRESETS)} "
+                           f"or {MOCAP_PREFIX}CLIP ('wogen mocap' lists the clips)")
+    return segments
+
+
 def build(name: str) -> tuple[list[tuple], dict]:
-    """Keys and clip options for a preset name, or several joined by commas (a chain)."""
-    names = [n.strip() for n in name.split(",") if n.strip()]
-    unknown = [n for n in names if n not in PRESETS]
-    if unknown or not names:
-        raise KeyError(f"Unknown preset(s) {unknown}; choose from {sorted(PRESETS)}")
+    """Keys and clip options for a preset name, or several joined by commas (a chain).
+    Chains with mocap segments are built in Blender (``wogen.bl.anim.preset``)."""
+    segments = parse_chain(name)
+    if any(s[0] == "mocap" for s in segments):
+        raise ValueError(f"{name!r} contains mocap segments: build it with wogen.bl.anim.preset")
+    names = [s[1] for s in segments]
     if len(names) == 1:
         return PRESETS[names[0]](), dict(PRESET_OPTIONS.get(names[0], {}))
     return chain(names)

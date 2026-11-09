@@ -142,11 +142,14 @@ items layer; `check` warns).
 | on the move | `clip --preset walk` (or `walk_loop` for a looping clip) |
 | in a hurry, sporty | `clip --preset run` or `run_loop` |
 | a little scene | chain presets: `clip --preset wave_hello,walk,bow` |
+| dancing | `clip --mocap dance` or `salsa` (captured motion; `wogen mocap` lists clips) |
+| overjoyed, celebrating | `clip --mocap very_happy` or `happy` |
+| natural, lifelike walk | `clip --mocap happy_walk` or `walk` |
 
 Expressions: `neutral smile_soft happy fun grin smug shy pout sad worried angry determined
-surprised startled sleepy smile_closed_eyes wink_l wink_r`. Poses: `idle a_pose contrapposto
-crouch hand_on_chest hands_on_hips kneel peace shy sit_chair sit_floor stride thinking wave
-bow cheer heart_arms kiss_hand kiss_blow`.
+surprised startled sleepy smile_closed_eyes wink_l wink_r`, plus mouth shapes `aa ih ou ee oh`
+and `blink`. Poses: `idle a_pose contrapposto crouch hand_on_chest hands_on_hips kneel peace
+shy sit_chair sit_floor stride thinking wave bow cheer heart_arms kiss_hand kiss_blow`.
 
 ## Rules
 

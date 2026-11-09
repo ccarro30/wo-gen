@@ -21,11 +21,12 @@ import math
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
-from .. import bvh
+from .. import bvh, footlock
 
 # BVH (x, y, z) -> ours: X stays (her left), BVH up (Y) -> Z, BVH forward (+Z) -> -Y.
 AXES = Matrix(((1.0, 0.0, 0.0), (0.0, 0.0, -1.0), (0.0, 1.0, 0.0)))
 AXES_INV = AXES.transposed()
+TRAVEL_ALIGN = 0.8        # m: clips travelling further than this are turned to walk at the camera
 
 
 def _local_rotation(channels: dict[str, float]) -> Matrix:
@@ -50,10 +51,12 @@ def _root_position(motion: bvh.Motion, frame: int) -> Vector:
 
 
 def retarget(motion: bvh.Motion, frames: list[int], armature=None, start: int = 1,
-             face_camera: bool = True, in_place: bool = False, rest_frame: int = 0) -> int:
+             face_camera: bool = True, in_place: bool = False, rest_frame: int = 0,
+             offset: tuple[float, float] = (0.0, 0.0)) -> int:
     """Key the character from ``motion`` at source ``frames`` (one per output frame, from
-    ``start``). ``face_camera`` turns the motion so she starts facing the camera (-Y) at the
-    origin; ``in_place`` removes horizontal travel. Returns the last keyed frame."""
+    ``start``). ``face_camera`` turns the motion so she starts facing the camera (-Y);
+    she starts at ``offset`` (the hips' horizontal offset from rest, as ``hips_location``);
+    ``in_place`` removes horizontal travel. Returns the last keyed frame."""
     from .character import character_armature
     from .outfit import shoe_lift
     from .pose import humanoid_map, reset_pose
@@ -87,9 +90,15 @@ def retarget(motion: bvh.Motion, frames: list[int], armature=None, start: int = 
     align = Matrix.Identity(3)
     origin = AXES @ _root_position(motion, frames[0])
     if face_camera:
-        forward = deltas(frames[0], align)[hips_bone] @ Vector((0.0, -1.0, 0.0))
+        # Travelling clips: head toward the camera; others: start facing it.
+        travel = AXES @ _root_position(motion, frames[-1]) - origin
+        travel.z = 0.0
+        if travel.length * scale > TRAVEL_ALIGN:
+            forward = travel.normalized()
+        else:
+            forward = deltas(frames[0], align)[hips_bone] @ Vector((0.0, -1.0, 0.0))
         yaw = math.atan2(forward.x, -forward.y)        # 0 when already facing -Y
-        align = Matrix.Rotation(yaw, 3, "Z")
+        align = Matrix.Rotation(-yaw, 3, "Z")          # turn that direction onto -Y
     rest_height = (AXES @ _root_position(motion, rest_frame)).z
 
     for pb in arm.pose.bones:
@@ -119,6 +128,8 @@ def retarget(motion: bvh.Motion, frames: list[int], armature=None, start: int = 
         move = align @ Vector((p.x - origin.x, p.y - origin.y, 0.0)) * scale
         if in_place:
             move.x = move.y = 0.0
+        move.x += offset[0]
+        move.y += offset[1]
         move.z = (p.z - rest_height) * scale + lift
         moves.append(move)
         frame_out += 1
@@ -141,19 +152,162 @@ def _key_hips(arm, bone: str, rest: Matrix, moves: list[Vector], start: int) -> 
         pb.keyframe_insert("location", frame=start + i)
 
 
+HEEL_BACK = 0.02          # m: the heel's sole point sits this far behind the ankle joint
+TOE_AHEAD = 0.04          # m: the toe tip sits this far ahead of the ball (toes joint)
+
+
+def _sole_locals(arm, hmap, side: str) -> dict[str, tuple[str, Vector]]:
+    """Heel and toe-tip points on the sole, as (bone, bone-local offset). At rest the sole is
+    on the floor (z = 0); posed, ``pb.matrix @ offset`` follows the foot's roll."""
+    out = {}
+    for key, name, dy in (("heel", "foot", HEEL_BACK), ("toe", "toes", -TOE_AHEAD)):
+        bone = arm.data.bones[hmap[f"{side}_{name}"]]
+        point = Vector((bone.head_local.x, bone.head_local.y + dy, 0.0))
+        out[key] = (bone.name, bone.matrix_local.inverted() @ point)
+    return out
+
+
 def _floor_offset(arm, hmap, start: int, end: int, lift: float) -> float:
-    """How far the clip floats: the low percentile of the per-frame lowest foot joint above
-    its rest height (contacts land on the floor; real airborne moments stay airborne)."""
-    names = [hmap[n] for n in ("left_foot", "right_foot", "left_toes", "right_toes") if n in hmap]
-    rest_min = min(arm.data.bones[n].head_local.z for n in names)
+    """How far the clip floats: the low percentile of the per-frame lowest sole point (heels
+    and toe tips) above the floor. Contacts land on the floor; real airborne moments stay up."""
+    soles = [p for side in ("left", "right") for p in _sole_locals(arm, hmap, side).values()]
     scene = bpy.context.scene
     lows = []
     for f in range(start, end + 1):
         scene.frame_set(f)
-        lows.append(min((arm.matrix_world @ arm.pose.bones[n].head).z for n in names))
+        lows.append(min((arm.pose.bones[b].matrix @ off).z for b, off in soles))
     lows.sort()
     low = lows[min(len(lows) - 1, int(len(lows) * FLOOR_PERCENTILE))]
-    return low - (rest_min + lift)       # the same floor target as pose.ground_feet
+    return low - lift                    # soles rest at z = 0, raised by the shoes' lift
+
+
+def _foot_samples(arm, hmap, side: str, start: int, end: int) -> list[dict]:
+    """Per frame (armature space): sole heel and toe-tip points, ankle, foot rotation, hip
+    and knee positions."""
+    scene = bpy.context.scene
+    pb = arm.pose.bones
+    foot = pb[hmap[f"{side}_foot"]]
+    knee = pb[hmap[f"{side}_lower_leg"]]
+    hip = pb[hmap[f"{side}_upper_leg"]]
+    soles = _sole_locals(arm, hmap, side)
+    out = []
+    for f in range(start, end + 1):
+        scene.frame_set(f)
+        sample = {k: pb[b].matrix @ off for k, (b, off) in soles.items()}
+        sample.update(ankle=foot.head.copy(), rot=foot.matrix.to_quaternion(),
+                      knee=knee.head.copy(), hip=hip.head.copy())
+        out.append(sample)
+    return out
+
+
+def lock_feet(start: int, end: int, armature=None) -> dict[str, float]:
+    """Remove foot sliding: hold planted feet in place (``wogen.footlock``) and re-solve
+    each leg with two-bone IK, keeping the captured knee direction and foot rotation. The
+    actor's proportions differ from hers, so retargeted feet otherwise skate a little.
+    Returns, per side, the largest correction applied (m)."""
+    from .character import character_armature
+    from .outfit import shoe_lift
+    from .pose import CHAIN_BONES, humanoid_map, reach
+    arm = armature or character_armature()
+    hmap = humanoid_map(arm)
+    scene = bpy.context.scene
+    fps = scene.render.fps / scene.render.fps_base
+    lift = shoe_lift()
+    result = {}
+    plans = {}
+    for side in ("left", "right"):
+        samples = _foot_samples(arm, hmap, side, start, end)
+        offsets = footlock.contact_offsets(
+            [{k: tuple(sample[k]) for k in ("heel", "toe")} for sample in samples], lift, fps)
+        plans[side] = (samples, [Vector((dx, dy, 0.0)) for dx, dy in offsets])
+        result[side] = max((o.length for o in plans[side][1]), default=0.0)
+    foot_rest = {side: arm.data.bones[hmap[f"{side}_foot"]].matrix_local.to_quaternion()
+                 for side in ("left", "right")}
+    for i, f in enumerate(range(start, end + 1)):
+        todo = [s for s in ("left", "right") if plans[s][1][i].length > 1e-5]
+        if not todo:
+            continue
+        scene.frame_set(f)
+        for side in todo:
+            s, offset = plans[side][0][i], plans[side][1][i]
+            line = (s["ankle"] - s["hip"]).normalized()
+            pole = (s["knee"] - s["hip"]) - line * (s["knee"] - s["hip"]).dot(line)
+            delta = (s["rot"] @ foot_rest[side].inverted()).to_euler("XYZ")
+            reach(f"{side}_foot", s["ankle"] + offset, pole, arm, hmap,
+                  orient=[math.degrees(a) for a in delta])
+            for name in CHAIN_BONES[f"{side}_foot"]:
+                arm.pose.bones[hmap[name]].keyframe_insert("rotation_quaternion", frame=f)
+    return result
+
+
+def foot_slide(start: int, end: int, armature=None) -> dict[str, float]:
+    """Diagnostic: skating per foot, the total horizontal travel (m) of each sole point
+    (heel, toe tip) while it touches the floor. Rolling over the heel or toe moves neither."""
+    from .character import character_armature
+    from .outfit import shoe_lift
+    from .pose import humanoid_map
+    arm = armature or character_armature()
+    hmap = humanoid_map(arm)
+    lift = shoe_lift()
+    out = {}
+    for side in ("left", "right"):
+        samples = _foot_samples(arm, hmap, side, start, end)
+        total = 0.0
+        for a, b in zip(samples, samples[1:]):
+            for k in ("heel", "toe"):
+                if max(a[k].z, b[k].z) - lift < footlock.SKATE_HEIGHT:
+                    total += Vector((b[k].x - a[k].x, b[k].y - a[k].y)).length
+        out[side] = total
+    return out
+
+
+def animate_fingers(start: int, end: int, armature=None) -> dict[str, float]:
+    """Key procedural finger motion (``wogen.hands``): open for raised or fast gestures, loose
+    fists when running, relaxed otherwise, with a slow drift. Returns the peak open amount
+    per side (a quick sanity check)."""
+    from mathutils import Euler
+
+    from .. import hands
+    from .character import character_armature
+    from .pose import humanoid_map
+    arm = armature or character_armature()
+    hmap = humanoid_map(arm)
+    scene = bpy.context.scene
+    fps = scene.render.fps / scene.render.fps_base
+    pb = arm.pose.bones
+    chest, head, hips = (pb[hmap[n]] for n in ("upper_chest", "head", "hips"))
+    samples = {"left": [], "right": []}
+    body = []
+    for f in range(start, end + 1):
+        scene.frame_set(f)
+        body.append(hips.head.copy())
+        for side in samples:
+            hand_pos = pb[hmap[f"{side}_hand"]].head
+            span = max(head.head.z - chest.head.z, 1e-3)
+            samples[side].append(((hand_pos.z - chest.head.z) / span, hand_pos - chest.head))
+    body_speed = [0.0] + [Vector((b.x - a.x, b.y - a.y)).length * fps for a, b in zip(body, body[1:])]
+    peaks = {}
+    rest = {n: pb[hmap[n]].bone.matrix_local.to_quaternion() for n in hands.FINGER_BONES if n in hmap}
+    plans = {}
+    for side, rows in samples.items():
+        heights = [h for h, _ in rows]
+        rel = [p for _, p in rows]
+        speed = [0.0] + [(b - a).length * fps for a, b in zip(rel, rel[1:])]
+        plans[side] = hands.openness(heights, speed, body_speed, fps)
+        peaks[side] = max(o for o, _ in plans[side])
+    for i, f in enumerate(range(start, end + 1)):
+        t = (f - start) / fps
+        for side in ("left", "right"):
+            o, r = plans[side][i]
+            for name, (x, y, z) in hands.finger_pose(side, o, r, t).items():
+                if name not in rest:
+                    continue
+                bone = pb[hmap[name]]
+                delta = Euler((math.radians(x), math.radians(y), math.radians(z)), "XYZ").to_quaternion()
+                bone.rotation_mode = "QUATERNION"
+                bone.rotation_quaternion = rest[name].inverted() @ delta @ rest[name]
+                bone.keyframe_insert("rotation_quaternion", frame=f)
+    return peaks
 
 
 def clear_garments(start: int, end: int, armature=None) -> int:
@@ -177,26 +331,53 @@ def clear_garments(start: int, end: int, armature=None) -> int:
     return corrected
 
 
-def apply(name: str, start_s: float = 0.0, end_s: float | None = None, fps: int = 24,
-          face_camera: bool = True, in_place: bool = False, expression: str | None = "smile_soft",
-          clear: bool = True) -> dict:
-    """Load catalog clip ``name`` (or a .bvh path), retarget ``start_s``..``end_s`` seconds at
-    ``fps`` from frame 1, set the scene range. ``clear`` keeps arms out of skirts (about 0.2 s
-    per frame). Returns clip options for physics/render."""
-    from . import anim
+def segment(name: str, start: int = 1, root: tuple[float, float] = (0.0, 0.0),
+            start_s: float = 0.0, end_s: float | None = None, fps: int = 24,
+            face_camera: bool = True, in_place: bool = False,
+            expression: str | None = "smile_soft", clear: bool = True, lock: bool = True,
+            fingers: bool = True) -> tuple[int, tuple[float, float]]:
+    """Key catalog clip ``name`` (or a .bvh path) from frame ``start``, beginning at floor
+    offset ``root``, without clearing other animation (chains use this). ``lock`` stops
+    planted feet skating (``lock_feet``); ``clear`` keeps arms out of skirts (each about
+    0.15 s per frame); ``fingers`` animates the hands (the capture has no finger data).
+    Returns (last frame, where she ends on the floor)."""
     from .character import character_armature
     from .face import expression as set_expression
+    from .pose import humanoid_map
     motion = bvh.load(bvh.clip_path(name))
     frames = bvh.sample_frames(motion, fps, start_s, end_s)
-    anim.clear()
     arm = character_armature()
-    end = retarget(motion, frames, arm, face_camera=face_camera, in_place=in_place)
-    if expression:
-        set_expression(expression, frame=1)
     scene = bpy.context.scene
     scene.render.fps = fps
-    scene.frame_start, scene.frame_end = 1, end
+    end = retarget(motion, frames, arm, start=start, face_camera=face_camera,
+                   in_place=in_place, offset=root)
+    for f in (start, end):                     # presets key the ground offset; mocap has none
+        arm.location.z = 0.0
+        arm.keyframe_insert("location", index=2, frame=f)
+    if expression:
+        set_expression(expression, frame=start)
+    if lock and not in_place:
+        lock_feet(start, end, arm)
+    if fingers:
+        animate_fingers(start, end, arm)
     if clear:
-        clear_garments(1, end, arm)
+        clear_garments(start, end, arm)
+    hips = arm.pose.bones[humanoid_map(arm)["hips"]]
+    scene.frame_set(end)
+    move = hips.bone.matrix_local.to_3x3() @ hips.location
+    return end, (move.x, move.y)
+
+
+def apply(name: str, start_s: float = 0.0, end_s: float | None = None, fps: int = 24,
+          face_camera: bool = True, in_place: bool = False, expression: str | None = "smile_soft",
+          clear: bool = True, lock: bool = True, fingers: bool = True) -> dict:
+    """Clear the animation and key one clip from frame 1 (see ``segment``); set the scene
+    range. Returns clip options for physics/render."""
+    from . import anim
+    anim.clear()
+    end, _ = segment(name, 1, (0.0, 0.0), start_s, end_s, fps, face_camera, in_place,
+                     expression, clear, lock, fingers)
+    scene = bpy.context.scene
+    scene.frame_start, scene.frame_end = 1, end
     scene.frame_set(1)
     return {"follow": not in_place, "carry": 0.85, "substeps": 2}

@@ -95,3 +95,29 @@ def test_run_is_faster_and_longer_than_walk():
     walk, run = anim.walk_keys(), anim.run_keys()
     assert abs(_hips_y(run[-1][1])) > abs(_hips_y(walk[-1][1]))
     assert (run[3][0] - run[1][0]) < (walk[3][0] - walk[1][0])
+
+
+def test_parse_chain_mixes_presets_and_mocap():
+    segs = anim.parse_chain("wave_hello, mocap:happy_walk ,bow,mocap:salsa@2-6,mocap:dance@1.5-")
+    assert segs == [("preset", "wave_hello"), ("mocap", "happy_walk", 0.0, None),
+                    ("preset", "bow"), ("mocap", "salsa", 2.0, 6.0), ("mocap", "dance", 1.5, None)]
+    with pytest.raises(KeyError):
+        anim.parse_chain("wave_hello,moonwalk")
+    with pytest.raises(ValueError):
+        anim.parse_chain("mocap:salsa@2")
+    with pytest.raises(ValueError):
+        anim.parse_chain("bow,walk_loop")
+    with pytest.raises(ValueError):
+        anim.build("wave_hello,mocap:walk")          # mocap chains are built in Blender
+
+
+def test_merge_options_and_placement():
+    opts = anim.merge_options({}, anim.PRESET_OPTIONS["spin"])
+    opts = anim.merge_options(opts, anim.MOCAP_OPTIONS)
+    assert opts == {"substeps": 3, "follow": True, "carry": 0.85, "travel": True}
+    part = anim.placed(anim.PRESETS["bow"](), 50, (0.0, -1.0))
+    assert part[0][0] == 50
+    assert P.resolve_pose(part[0][1])["hips_location"][1] == pytest.approx(-1.0)
+    keys = [(1, "idle", "happy"), (9, "idle", "happy")]
+    anim.drop_trailing_hold(keys)
+    assert keys == [(1, "idle", "happy")]

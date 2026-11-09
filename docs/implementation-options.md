@@ -30,8 +30,8 @@ Garments are a library harvested from VroidStudio exports. C isn't used.
 
 **Recommendation:** mesh hair modules, with optional curve-based flyaway strands for close-ups.
 
-**Outcome:** VroidStudio mesh hair (one style so far), recolored by colorize. A hairstyle
-library is the next planned module.
+**Outcome:** VroidStudio mesh hair as a library of 8 swappable hairstyles (harvested from
+exports, with their spring chains), recolored by colorize. No curve strands.
 
 ## 3. Shading and look
 
@@ -80,7 +80,9 @@ hero shots. ⚠ Check that the Wiggle 2 add-on is maintained on Blender 5.x. If 
 our own (a small verlet solver on a frame-change handler, baked to keyframes).
 
 **Outcome:** our own solver implementing VRM SpringBone 1.0 from VroidStudio's data, stepped
-per frame and baked to keys. Garment chains are carried with the garments. No cloth sim yet.
+per frame and baked to keys. Garment chains are carried with the garments; legs, forearms
+and hands collide with every chain. No cloth sim yet. Soft tissue (bust) is still a stiff spring
+chain; a dedicated damped-spring solver is planned (roadmap: body physics).
 
 ## 6. Poses and expressions
 
@@ -89,7 +91,7 @@ per frame and baked to keys. Garment chains are carried with the garments. No cl
 - **IK helpers**: foot planting, hand-to-target (face, hip, prop).
 - **Natural-language posing via MCP**: Claude maps a request to a library pose plus tweaks.
 
-**Outcome:** a data library (14 poses) instead of Asset Browser poses, with IK to body
+**Outcome:** a data library (19 poses) instead of Asset Browser poses, with IK to body
 landmarks and floor anchors. Custom poses are saved as TOML. Procedural noise isn't done.
 
 ## 7. Animation

@@ -10,8 +10,8 @@ Installs need explicit approval (global rule 1). Everything below marked ✅ is 
 | **VRM Add-on for Blender** | ✅ Blender Extensions (`bl_ext.blender_org.vrm`) | VRM import/export, MToon, spring-bone data, humanoid map | Headless jobs enable it themselves under `--factory-startup`. |
 | **Python + uv** | ✅ Python 3.14, uv | CLI, tests | `requires-python >=3.13`. `.venv` via `uv sync`. Dev group: `pytest`, `fake-bpy-module`. |
 | **MCP for Blender** | ✅ 2.2.7, pinned | Claude ↔ live Blender | See below. |
-| **VroidStudio** | ✅ (winget) | Base body, garments, (next) hairstyles | Source project in `vroid/model.vroid`. |
-| **Git + Git LFS** | ✅ installed; repo on GitHub | Version control | `.gitattributes` puts `*.vrm *.vroid *.blend *.fbx *.png *.jpg *.mp4` in LFS. Set up LFS once per machine before cloning. |
+| **VroidStudio** | ✅ (winget) | Base body, garments, hairstyles | Source project in `vroid/model.vroid`. |
+| **Git + Git LFS** | ✅ installed; repo on GitHub | Version control | `.gitattributes` puts `*.vrm *.vroid *.blend *.fbx *.png *.jpg *.mp4 *.bvh` in LFS. Set up LFS once per machine before cloning. |
 | **GPU** | ✅ AMD RX 9070 XT (HIP) | EEVEE rendering | Keep Adrenalin drivers current. Cycles works on HIP but isn't used for the toon look. |
 
 Not needed: standalone ffmpeg (Blender writes H.264 MP4 itself), Wiggle 2 (own solver), Rigify
@@ -68,7 +68,7 @@ nothing is installed.
   `--background --factory-startup --python-exit-code 1 --python-expr <bootstrap> -- <job> <args>`.
   Jobs live in `wogen/bl/jobs.py`; options after the command are forwarded unchanged.
 - **Tests:** run `uv run pytest`. Pure modules take about 1 s; the `blender`-marked
-  integration tests run headless renders, a portrait job and a clip job (about 47 s total).
+  integration tests run headless renders, a portrait job and a clip job (about 50 s total).
 - **Scratch and output:** temp files go to `.cache/tmp/` (deleted after use), and outputs go
   to `out/`. Both are gitignored, as are `references/` and the `.cache/` wheel cache.
 - **Live session:** in chat, Claude calls `wogen.bl.*` through MCP. Reload edited modules with
@@ -76,9 +76,10 @@ nothing is installed.
 
 ## Licensing
 
-- Everything in `assets/` was made by you in VroidStudio. Your own VroidStudio creations are
-  generally yours to use (⚠ check VroidStudio's terms for preset/sample items before
-  redistributing).
+- Everything in `assets/` except the mocap clips was made by you in VroidStudio. Your own
+  VroidStudio creations are generally yours to use (⚠ check VroidStudio's terms for
+  preset/sample items before redistributing). The CMU mocap clips are third-party, free for
+  research and commercial use, with a credit line (see `assets/LICENSES.md`).
 - `references/` holds third-party copyrighted screenshots, used as a style reference only and
   never committed.
 - Provenance is recorded in [assets/LICENSES.md](../assets/LICENSES.md); add a row for every new

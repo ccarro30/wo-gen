@@ -63,6 +63,22 @@ from the images in `references/`.
   larger than realistic.
 - The generator enforces adult proportion ranges regardless of how "cute" the face preset is.
 
+## Motion and secondary physics
+
+Zenless Zone Zero is the model here too: secondary motion is lively but controlled, and it
+sells weight. (Qualitative targets from watching the game; judge them on our clips with
+side-view frame strips.)
+
+- **Hair follows with a slight lag and reacts to impacts.** Footfalls, landings and quick
+  turns send a visible bounce through the hair, from loose tips to stiffer roots. It settles
+  in about half a second and never streams back unrealistically while she walks.
+- **Breasts have soft, damped secondary motion.** They lag the chest a little and bounce on
+  impacts (footfalls, landings, quick turns). The motion is mostly vertical with a smaller
+  sideways sway, settles within 2–3 oscillations, is subtle at idle and scales with size. It
+  never looks rubbery or exaggerated.
+- **Skirts and loose cloth swing and settle**; limbs push them aside rather than passing
+  through.
+
 ## Lighting and post
 
 - Strong key light plus a colored environment fill (warm/cool contrast). Bloom on highlights.
@@ -97,6 +113,9 @@ from the images in `references/`.
 | Hair accessories as modules | 🟡 Possible as garments (slot `accessory`) | `outfit` |
 | Urban techwear outfits | ⬜ Current library is VroidStudio items (casual, dresses, school) | `assets/garments` |
 | Adult proportions | ✅ Enforced (≥ 6.6 heads) | `body.validate` |
+| Hair follow-through | 🟡 Lags and swings; under-reacts to impacts (jogging) | `physics` |
+| Breast secondary motion | ⬜ Too rigid (high-drag VRM chain) | `physics` (planned: soft-tissue solver) |
+| Skirt swing, limbs push cloth | ✅ Spring chains with limb colliders; no cloth sim between bones | `physics` |
 | Bloom, grade, chromatic aberration, vignette | ✅ | `post` |
 | Depth of field, grain | ⬜ | — |
 | Urban backgrounds | ⬜ Flat backdrop only | `render.setup_world` |

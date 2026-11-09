@@ -91,7 +91,10 @@ loops). Presets: `walk`, `run`, `spin`, `jump_for_joy`, `hop`, `wave_hello`, `bl
 Keyed feet are planted automatically between keys.
 
 - **Chains**: `--preset wave_hello,walk,spin,bow` plays presets in order with a 10-frame
-  transition; after a walk or run the rest happens where she stopped. From chat:
+  transition; after a walk or run the rest happens where she stopped. Mix in motion capture
+  with `mocap:CLIP` (trim with `@START-END` seconds), e.g.
+  `--preset wave_hello,mocap:happy_walk,bow` or `mocap:salsa@2-6,bow`: each part starts where
+  the previous one ended and her feet step across the 14-frame transitions. From chat:
   `opts = anim.preset("wave_hello,walk,bow")`, then bake with `opts` and render.
 - **Loops**: `walk_loop` / `run_loop` simulate several warm-up cycles and render only the last
   one, with the spring keys closed onto the first frame, so the MP4 loops without a seam
@@ -105,8 +108,8 @@ rounded up to even numbers (H.264).
 
 `uv run wogen mocap` lists the clips; `uv run wogen clip --mocap dance --expression happy
 --framing full --out out\dance.mp4` renders one (`--start/--end` seconds to trim,
-`--in-place` to remove travel, `--no-clear` to skip the arm-vs-skirt pass, which costs about
-0.2 s per frame). From chat: `opts = mocap.apply("dance")`, then `physics.bake(...)` and
+`--in-place` to remove travel; `--no-foot-lock` and `--no-clear` skip foot locking and the
+arm-vs-skirt pass, each about 0.15 s per frame). Fingers are animated automatically. From chat: `opts = mocap.apply("dance")`, then `physics.bake(...)` and
 `render.clip(..., follow=opts["follow"])`. To get more clips, see the motion capture section
 of [tooling.md](tooling.md).
 
@@ -130,7 +133,7 @@ then restart Blender and Claude Code. See [tooling.md](tooling.md).
 
 ## Run tests
 
-`uv run pytest` runs everything (140 tests, about 55 s). The 3 `blender`-marked tests launch
+`uv run pytest` runs everything (152 tests, about 55 s). The 3 `blender`-marked tests launch
 headless Blender (render test, portrait job with a hairstyle, clip job).
-`uv run pytest -m "not blender"` runs the 137 pure tests in under a second. Test temp files go
+`uv run pytest -m "not blender"` runs the 149 pure tests in under a second. Test temp files go
 to `.cache/pytest`.

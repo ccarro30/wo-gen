@@ -7,13 +7,14 @@
  │ CLI (uv run      │ ──────────────────▶ │ Blender 5.2 (headless job or live GUI)        │
  │ wogen …)         │  launches Blender   │                                               │
  └──────────────────┘                     │  wogen.bl                                     │
- ┌──────────────────┐  Python via MCP     │   import VRM ─▶ body retarget ─▶ toon/overlay │
- │ Claude + Blender │ ──────────────────▶ │   ─▶ face keys ─▶ outfit split/equip ─▶ palette│
- │ MCP (live scene) │  + screenshots      │   ─▶ pose / expression / anim ─▶ physics bake │
+ ┌──────────────────┐  Python via MCP     │   import VRM ─▶ body retarget ─▶ face shading │
+ │ Claude + Blender │ ──────────────────▶ │   ─▶ toon/overlay ─▶ face keys ─▶ outfit/hair │
+ │ MCP (live scene) │  + screenshots      │   ─▶ pose / anim / mocap ─▶ physics bake      │
  └──────────────────┘                     │   ─▶ render (EEVEE + compositor) / export     │
                                           └──────────────────────┬────────────────────────┘
         assets/base/*.vrm  assets/garments/*.blend                │
         specs/*.toml       assets/poses/*.toml          PNG · MP4 · .blend · VRM · FBX
+        assets/mocap/cmu/*.bvh
 ```
 
 ## Principles
@@ -44,6 +45,8 @@ Pure modules (no `bpy`, unit-tested):
 | `spec` | TOML specs; seeded resolution of `[min, max]` ranges and `{choice = [...]}` |
 | `body` | Body/face/palette parameters, ranges, adult-proportion rule, spec → params |
 | `poses` | Pose format, mirroring, hand shapes, IK entries, library, TOML save/load |
+| `hands` | Procedural finger animation (open / relaxed / loose fist from the motion) |
+| `footlock` | Foot-contact detection and lock offsets for retargeted motion |
 | `bvh` | BVH parser, mocap clip catalog (`assets/mocap/manifest.json`), CMU → humanoid bone map |
 | `motions` | Motion presets and generators (turn, hop, spin, sway, walk, run, loops), chains, per-preset clip options |
 | `expressions` | Expression presets over VroidStudio `Fcl_*` face keys |
@@ -66,8 +69,9 @@ Blender modules (`wogen.bl`):
 | `face` | Expressions and gaze |
 | `pose` | Applying poses (FK + analytic two-bone IK), saving poses, grounding (with shoe lift), thumb solver |
 | `clearance` | Moves forearms/hands out of skirts and dresses after posing |
-| `anim` | Keys sequences (layered-action F-curve helpers), per-frame foot planting |
-| `physics` | VRM SpringBone 1.0 solver, baked to keyframes (character + garment chains) |
+| `anim` | Keys sequences and chains (incl. mocap segments), per-frame foot planting, stepping transitions, loops |
+| `mocap` | BVH retargeting, floor pass, foot locking, procedural fingers, per-frame skirt clearance |
+| `physics` | VRM SpringBone 1.0 solver baked to keyframes (character + garment chains, limb colliders, carry); skirt settle for stills |
 | `render` | Portrait camera/lights/world, turntable, clips, contact sheets |
 | `post` | Compositor: bloom, chromatic aberration, grade, vignette |
 | `props` | Simple props (seat) with a flat-color outline (`toon.add_flat_outline`) |
@@ -89,20 +93,19 @@ Blender modules (`wogen.bl`):
      uniformly and are inherited by children, so hair follows the head.
    - The transforms are stored on the armature (`wg_body_transforms`), so garments equipped
      later fit the same body.
-4. **Toon** (`bl/toon.py`): every MToon material gets a `wg_` cel twin, with outlines as an
-   inverted-hull Solidify using per-material `wgo_` colors.
-5. **Overlay**: a geometry-nodes copy of the brows, moved toward the camera along each view
-   ray, so it draws over the bangs at the same screen position.
-6. **Face shading** (`bl/face_shading.py`, right after the body retarget): the face skin
-   shades with the normals of an ellipsoid fitted to the face, leaned toward the face's
-   forward direction, so the shadow sweeps in cleanly from the side instead of breaking up
-   on the nose and lips.
+4. **Face shading** (`bl/face_shading.py`): the face skin shades with the normals of an
+   ellipsoid fitted to the face, leaned toward the face's forward direction, so the shadow
+   sweeps in cleanly from the side instead of breaking up on the nose and lips.
    - Baked into the mesh's custom normals (what export keeps).
    - For rendering, the `wg_face_normals` geometry-nodes modifier (after the armature) sets
      them again from rest-space attributes, rotated by `wg_head_frame` (an empty on the head
      bone). Surface-relative normals would tilt with every shape key and leave patches.
    - The brows-through-hair overlay captures and restores normals around its Join Geometry,
      which would otherwise drop them.
+5. **Toon** (`bl/toon.py`): every MToon material gets a `wg_` cel twin, with outlines as an
+   inverted-hull Solidify using per-material `wgo_` colors.
+6. **Overlay**: a geometry-nodes copy of the brows, moved toward the camera along each view
+   ray, so it draws over the bangs at the same screen position.
 7. **Face keys**: procedural `wg_eye_size`, `wg_eye_height`, `wg_face_width`,
    `wg_chin_length`, `wg_brow_height`, `wg_brow_tilt`, `wg_nose_size`, `wg_mouth_width`.
    Expression keys are rescaled around the eyes to match `eye_size`
@@ -176,6 +179,13 @@ Generated characters carry `wg_generated` (resolved spec + params) on the armatu
   - **Chains** (`motions.chain`, via `motions.build("a,b")`): presets offset in time with a
     gap, a trailing hold dropped; after a `travel` preset, later poses are shifted (hips and
     `rest:` foot targets) to where she stopped. Options merge (any follow, max carry/substeps).
+    Chains with `mocap:CLIP[@a-b]` tokens (`motions.parse_chain`) are built in Blender
+    (`anim._mixed_chain`): each part is keyed into the same action from where the previous
+    one ended (`mocap.segment` with a floor offset), then `_step_transition` moves the feet
+    across each 14-frame gap one at a time on lifted arcs instead of sliding both.
+  - **FK feet are planted too**: a grounded key whose foot has no IK uses the foot's posed
+    position as its plant target, so feet don't drift with the hips between keys (the spin
+    now steps around instead of gliding: 140 cm of sliding → under 1 cm).
   - **Quaternion continuity**: after keying, keys in the opposite hemisphere from the
     previous key are negated, so 360° → 0° doesn't play a reverse spin.
   - **Clip options** (`PRESET_OPTIONS`): `follow` keys a camera pivot to the hips' travel;
@@ -190,12 +200,29 @@ Generated characters carry `wg_generated` (resolved spec + params) on the armatu
     T-pose colliders don't push the authored hair out when the arms are down.
   - `limb_colliders` (default on) adds spheres along the legs, forearms and hands to every
     chain, with their slack measured on the T-pose, so hands push skirts and hair aside.
+  - `carry` (travel clips) shifts every chain by the hips' movement each frame (all three
+    axes today), `substeps` subdivides fast motion, and `overrides` tune chains by VRM name.
+    The bust default (`{"Bust": drag 0.3}`) is too rigid; replacing it with a soft-tissue
+    solver is on the roadmap.
 - **Mocap** (`bvh.py` pure parser + catalog; `bl/mocap.py`): CMU BVH frame 0 is a T-pose, as
   is our rest. Per mapped joint the motion is the world rotation relative to that frame,
   converted from BVH axes (Y up, facing +Z) to ours and applied over the bone's rest:
   `basis = rest⁻¹ · D_parent⁻¹ · D · rest`. Hips travel is scaled by hip-height ratio, the
-  clip is turned to face the camera, a floor pass drops it so contacts land on the floor
-  (5th percentile of the lowest foot), and `clearance.clear_arms` runs per frame.
+  clip is turned to face the camera (travelling clips: to walk toward it), a floor pass drops
+  it so contacts land on the floor (5th percentile of the lowest sole point: heel or toe tip,
+  carried by the foot/toes bones), then:
+  - **Foot locking** (`footlock.py` pure, `mocap.lock_feet`): per foot, the pivot is the lower
+    sole point; touching the floor (or low and nearly still) = planted. A horizontal
+    correction holds the pivot where it landed, carries over heel→toe rolls and eases out
+    after lift-off; the leg is re-solved with two-bone IK keeping the captured knee direction
+    and foot rotation. (Lowering the hips for out-of-reach locks was tried and dropped: it
+    made the swing foot scrape the floor.)
+  - **Fingers** (`hands.py` pure, `mocap.animate_fingers`): CMU has no usable finger data
+    (one rigid knuckle marker that mixes in wrist bend), so fingers are procedural: per frame
+    an open amount (hand raised between chest and head, or moving fast relative to the chest
+    while the body isn't travelling) and a fist amount (body running), smoothed both ways
+    (no lag), blend the library's relaxed/open/fist shapes, plus a slow per-finger drift.
+  - `clearance.clear_arms` runs per frame (fingertips included).
 
 ## Rendering
 
@@ -231,9 +258,13 @@ reproducible runs headless. Exploration code worth keeping moves into the packag
 
 - **Custom properties.** Armature: `wg_body_params`, `wg_body_transforms`, `wg_generated`.
   Garment objects: `wg_garment`, `wg_slot`, `wg_item`, `wg_lift`, `wg_rig`, `wg_recolor`.
-  Face: `wg_through_hair_params`. Materials: `wg_source` (twin → MToon source).
+  Face object: `wg_through_hair_params`; Face mesh: `wg_face_normals` (normals baked),
+  `wg_eye_size_applied`, attributes `wg_face_normal`/`wg_face_normal_w`. Materials:
+  `wg_source` (twin → MToon source).
 - **Names.** `wg_*` cel twins, `wgo_*` outlines, `wgx_*` overlay materials. `Garment_<name>`
-  objects. Blender's `.NNN` duplicate suffixes are stripped when parsing names.
+  objects. Helpers: `wg_head_frame` (empty on the head bone), `wg_cam`, `wg_key`/`wg_rim`
+  lights, `wg_follow` (follow-camera pivot), modifiers `wg_outline`, `wg_through_hair`,
+  `wg_face_normals`. Blender's `.NNN` duplicate suffixes are stripped when parsing names.
 - **Paths.** Temporary files only go under `.cache/tmp` (never the system temp); outputs go
   under `out/`.
 - **Python.** Blender bundles Python 3.13, so the package stays 3.13-compatible and

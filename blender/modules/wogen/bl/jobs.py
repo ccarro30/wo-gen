@@ -134,6 +134,8 @@ def _clip(argv: list[str]) -> None:
     p.add_argument("--in-place", action="store_true", help="mocap: remove horizontal travel")
     p.add_argument("--no-clear", action="store_true",
                    help="mocap: don't keep arms out of skirts (faster)")
+    p.add_argument("--no-foot-lock", action="store_true",
+                   help="mocap: let feet slide as retargeted (faster)")
     p.add_argument("--out", required=True)
     args = p.parse_args(argv)
     if args.mocap:
@@ -142,9 +144,14 @@ def _clip(argv: list[str]) -> None:
         bvh.clip_path(args.mocap)      # fail on unknown/missing clips before the slow setup
         _prepare(args)
         opts = mocap.apply(args.mocap, args.start, args.end, args.fps, in_place=args.in_place,
-                           expression=args.expression, clear=not args.no_clear)
+                           expression=args.expression, clear=not args.no_clear,
+                           lock=not args.no_foot_lock)
     else:
-        anim.build(args.preset)        # fail on unknown presets before the slow setup
+        from .. import bvh                # fail on unknown presets/clips before the slow setup
+        from ..motions import parse_chain
+        for seg in parse_chain(args.preset):
+            if seg[0] == "mocap":
+                bvh.clip_path(seg[1])
         _prepare(args)
         opts = anim.preset(args.preset, args.fps)
     if not args.no_physics:
