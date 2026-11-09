@@ -17,6 +17,10 @@ Per joint, per frame (spec)::
 Simulation runs in armature space (all VroidStudio chains use ``Root`` as their center),
 so moving the whole armature doesn't cause jiggle.
 
+The breasts don't use their VRM chain: ``_Tissue`` drives the bust bones with the
+soft-tissue solver (``wogen.softtissue``) from the chest's acceleration, baked in the same
+pass.
+
 Chat usage::
 
     from wogen.bl import anim, physics
@@ -33,7 +37,13 @@ from dataclasses import dataclass, field
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
+from ..softtissue import TissueParams
 from .anim import remove_fcurves
+
+BUST_SPRING = "Bust"            # VroidStudio's spring name for the breast chains
+# VRM spring approximation of the soft-tissue bounce, written into exported VRMs (VRM can only
+# store spring chains). VroidStudio's own drag 0.05 rings for too long; 0.3 was rigid.
+BUST_SPRING_PARAMS = {"drag_force": 0.15, "stiffness": 0.75}
 
 
 @dataclass
@@ -41,22 +51,27 @@ class PhysicsSettings:
     stiffness_scale: float = 1.0
     drag_scale: float = 1.0
     gravity_scale: float = 1.0
-    # Per-chain overrides by VRM spring name: {"Bust": {"drag_force": 0.3}}.
-    # VroidStudio exports bust drag 0.05 (very bouncy); default to a calmer value.
+    # Per-chain overrides by VRM spring name: {"Bust": {"drag_force": 0.3}}. The bust chain
+    # (only simulated with soft_tissue=False) gets the parameters exported VRMs use.
     overrides: dict[str, dict[str, float]] = field(
-        default_factory=lambda: {"Bust": {"drag_force": 0.3, "stiffness": 1.0}})
+        default_factory=lambda: {BUST_SPRING: dict(BUST_SPRING_PARAMS)})
     settle_frames: int = 30     # steps run on the first frame so chains start at rest
     substeps: int = 1           # >1 for fast motion (more stable collisions)
     # Allow each joint/collider pair the overlap it has in the first frame's pose, so the
     # authored hairstyle isn't pushed out at rest (VroidStudio colliders are set up for the
     # T-pose; with arms down, hair tips already sit inside chest/arm spheres).
     rest_slack: bool = True
-    # Carry springs along with the hips' travel (0..1), like a VRM spring "center": at 1,
-    # walking forward causes no lag at all; a little below 1 keeps a hint of sway.
+    # Carry springs along with the hips' horizontal travel (0..1), like a VRM spring
+    # "center": at 1, walking forward causes no lag at all; a little below 1 keeps a hint of
+    # sway. Vertical motion is never carried, so footfalls and landings still bounce the hair.
     carry: float = 0.0
     # Bakes add spheres along the legs, forearms and hands to every chain (slack measured on
     # the T-pose), so skirts and hair are pushed by the limbs instead of pierced.
     limb_colliders: bool = True
+    # Breasts use the soft-tissue solver (``wogen.softtissue``) instead of the VRM "Bust"
+    # chain: a tuned damped bounce driven by the chest's acceleration.
+    soft_tissue: bool = True
+    tissue: TissueParams = field(default_factory=TissueParams)
 
 
 @dataclass
@@ -263,6 +278,9 @@ def bake(settings: PhysicsSettings | None = None, frame_start: int | None = None
     end = scene.frame_end if frame_end is None else frame_end
     clear(arm)
     springs = _springs(arm, settings)
+    if settings.soft_tissue:
+        springs = [sp for sp in springs if sp.name != BUST_SPRING]
+    tissue = _Tissue(arm, settings.tissue) if settings.soft_tissue else None
     limbs = _limb_colliders(arm) if settings.limb_colliders else []
     limb_from = {}
     for sp in springs:
@@ -298,8 +316,11 @@ def bake(settings: PhysicsSettings | None = None, frame_start: int | None = None
     last_center = hips.head.copy() if hips is not None else None
     for frame in range(start, end + 1):
         scene.frame_set(frame)
+        if tissue is not None:
+            tissue.sample()
         if settings.carry and hips is not None:
             shift = (hips.head - last_center) * settings.carry
+            shift.z = 0.0
             last_center = hips.head.copy()
             for sp in springs:
                 for j in sp.joints:
@@ -314,8 +335,89 @@ def bake(settings: PhysicsSettings | None = None, frame_start: int | None = None
                 arm.pose.bones[j.bone].keyframe_insert("rotation_quaternion", frame=frame)
                 keyed += 1
     scene.frame_set(start)
+    extra = ""
+    if tissue is not None and tissue.sides:
+        tissue.key(start, scene.render.fps / scene.render.fps_base)
+        extra = f" + soft tissue ({len(tissue.sides)} sides)"
+        scene.frame_set(start)
     return (f"baked {len(springs)} springs "
-            f"({sum(len(s.joints) for s in springs)} joints) over frames {start}-{end}")
+            f"({sum(len(s.joints) for s in springs)} joints){extra} over frames {start}-{end}")
+
+
+# Share of the tissue offset applied as a translation of the bust bone (the rest is a swing
+# about its base). VroidStudio weights the breast only partly to ``Bust1`` (0.83 at the
+# centre, falling off toward the chest) and barely to ``Bust2``; a swing alone moves just
+# the centre, while a translation shifts the whole weighted area as one mass.
+TISSUE_TRANSLATE = 0.6
+# Downward offsets are scaled by this: a full drop folds the underside into the torso and
+# draws a hard crease line.
+TISSUE_DROP = 0.7
+
+
+class _Tissue:
+    """Breast secondary motion: samples each side's anchor (where the chest carries the
+    bust) per frame, then simulates and keys the ``Bust1`` bones (location + rotation)."""
+
+    def __init__(self, arm, params: TissueParams):
+        import json
+        from .. import softtissue
+        from .body import PARAMS_KEY
+        self.arm = arm
+        bust = json.loads(arm.get(PARAMS_KEY, "{}")).get("bust", 1.0)
+        self.params = softtissue.for_size(params, bust)
+        self.sides = []
+        for b in arm.data.bones:
+            if not (b.name.endswith("Bust1") and b.children and b.parent):
+                continue
+            mid = b.children[0]
+            tip = mid.children[0].head_local if mid.children else mid.tail_local
+            chest = b.parent
+            self.sides.append({
+                "bone": b.name, "chest": chest.name,
+                "anchor": chest.matrix_local.inverted() @ mid.head_local,   # chest-local
+                "chest_rest_q": chest.matrix_local.to_quaternion(),
+                "lever": tip - b.head_local,                                # rest frame
+                "rest_q": b.matrix_local.to_quaternion(),
+                "pos": [], "rot": []})
+
+    def sample(self) -> None:
+        mw = self.arm.matrix_world
+        for s in self.sides:
+            chest = self.arm.pose.bones[s["chest"]]
+            s["pos"].append(tuple(mw @ (chest.matrix @ s["anchor"])))
+            s["rot"].append(mw.to_quaternion() @ chest.matrix.to_quaternion()
+                            @ s["chest_rest_q"].inverted())
+
+    def offsets(self, side: dict, fps: float) -> list[tuple[float, float, float]]:
+        from .. import softtissue
+        acc = softtissue.accelerations(side["pos"], fps)
+        inv = [q.inverted() for q in side["rot"]]
+        local = [tuple(q @ Vector(a)) for q, a in zip(inv, acc)]
+        grav = [tuple(q @ Vector(softtissue.GRAVITY)) for q in inv]
+        return softtissue.simulate(local, fps, self.params, grav)
+
+    @staticmethod
+    def pose(arm, side: dict, offset) -> None:
+        """Pose one side's bust bone for a tissue offset (rest frame, at the chain's tip)."""
+        off = Vector(offset)
+        if off.z < 0:
+            off.z *= TISSUE_DROP
+        lever, rq = side["lever"], side["rest_q"]
+        move = off * TISSUE_TRANSLATE
+        q = lever.rotation_difference(lever + off - move)
+        pb = arm.pose.bones[side["bone"]]
+        pb.rotation_mode = "QUATERNION"
+        # Rest-frame motion as bone-local basis values (as in _step_spring).
+        pb.rotation_quaternion = rq.inverted() @ q @ rq
+        pb.location = rq.inverted() @ move
+
+    def key(self, start: int, fps: float) -> None:
+        for s in self.sides:
+            pb = self.arm.pose.bones[s["bone"]]
+            for i, off in enumerate(self.offsets(s, fps)):
+                self.pose(self.arm, s, off)
+                pb.keyframe_insert("rotation_quaternion", frame=start + i)
+                pb.keyframe_insert("location", frame=start + i)
 
 
 LEG_COLLIDERS = (("upper_leg", 0.075, 6), ("lower_leg", 0.055, 4))   # (bone, radius, spheres)

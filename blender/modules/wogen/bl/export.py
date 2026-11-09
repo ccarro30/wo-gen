@@ -8,7 +8,8 @@ a temp .blend and runs a headless Blender), where ``prepare()`` destructively:
 2. bakes the procedural face shape keys (``wg_*``) into the mesh and its expression keys;
 3. deletes skin hidden under clothes and garments that aren't worn;
 4. restores the MToon materials, baking palette/garment recolors into new textures;
-5. registers garment spring chains and colliders (skirts) in the VRM spring-bone data.
+5. registers garment spring chains and colliders (skirts) in the VRM spring-bone data, and
+   tunes the bust chains to approximate the soft-tissue bounce.
 
 VRM keeps MToon materials (viewers draw cel shading and outlines themselves). FBX gets
 plain Principled BSDF materials using the baked base-color textures.
@@ -167,6 +168,20 @@ def _bake_material_recolors(meshes) -> int:
     return baked
 
 
+def _tune_bust_springs(arm: bpy.types.Object) -> int:
+    """Give the VRM bust chains the parameters that approximate the soft-tissue bounce."""
+    from .physics import BUST_SPRING, BUST_SPRING_PARAMS
+    tuned = 0
+    for sp in arm.data.vrm_addon_extension.spring_bone1.springs:
+        if sp.vrm_name != BUST_SPRING:
+            continue
+        for j in sp.joints[:-1]:            # the last joint is the chain's end
+            for key, value in BUST_SPRING_PARAMS.items():
+                setattr(j, key, value)
+            tuned += 1
+    return tuned
+
+
 def _register_garment_springs(arm: bpy.types.Object) -> int:
     """Add worn garments' spring chains/colliders to the VRM spring-bone data."""
     from . import garment_rig
@@ -247,6 +262,7 @@ def prepare(name: str | None = None) -> list[str]:
     log.append(f"hidden skin vertices deleted: {_delete_hidden_skin(outfit.body_mesh())}")
     log.append(f"recolored materials baked: {_bake_material_recolors(meshes)}")
     log.append(f"garment spring chains registered: {_register_garment_springs(arm)}")
+    log.append(f"bust spring joints tuned: {_tune_bust_springs(arm)}")
     from .garment_rig import RIG_KEY
     for g in outfit.garments():       # chains now live in the VRM data; avoid double simulation
         if RIG_KEY in g:

@@ -113,8 +113,8 @@ side-view frame strips.)
 | Hair accessories as modules | 🟡 Possible as garments (slot `accessory`) | `outfit` |
 | Urban techwear outfits | ⬜ Current library is VroidStudio items (casual, dresses, school) | `assets/garments` |
 | Adult proportions | ✅ Enforced (≥ 6.6 heads) | `body.validate` |
-| Hair follow-through | 🟡 Lags and swings; under-reacts to impacts (jogging) | `physics` |
-| Breast secondary motion | ⬜ Too rigid (high-drag VRM chain) | `physics` (planned: soft-tissue solver) |
+| Hair follow-through | ✅ Lags, swings, bounces on footfalls and landings (tuning by eye pending) | `physics` |
+| Breast secondary motion | ✅ Damped soft-tissue bounce, mostly vertical, scales with size (tuning by eye pending) | `softtissue`, `physics` |
 | Skirt swing, limbs push cloth | ✅ Spring chains with limb colliders; no cloth sim between bones | `physics` |
 | Bloom, grade, chromatic aberration, vignette | ✅ | `post` |
 | Depth of field, grain | ⬜ | — |

@@ -133,7 +133,7 @@ then restart Blender and Claude Code. See [tooling.md](tooling.md).
 
 ## Run tests
 
-`uv run pytest` runs everything (152 tests, about 55 s). The 3 `blender`-marked tests launch
+`uv run pytest` runs everything (159 tests, about 55 s). The 3 `blender`-marked tests launch
 headless Blender (render test, portrait job with a hairstyle, clip job).
-`uv run pytest -m "not blender"` runs the 149 pure tests in under a second. Test temp files go
+`uv run pytest -m "not blender"` runs the 156 pure tests in under a second. Test temp files go
 to `.cache/pytest`.

@@ -81,8 +81,9 @@ our own (a small verlet solver on a frame-change handler, baked to keyframes).
 
 **Outcome:** our own solver implementing VRM SpringBone 1.0 from VroidStudio's data, stepped
 per frame and baked to keys. Garment chains are carried with the garments; legs, forearms
-and hands collide with every chain. No cloth sim yet. Soft tissue (bust) is still a stiff spring
-chain; a dedicated damped-spring solver is planned (roadmap: body physics).
+and hands collide with every chain. No cloth sim yet. Soft tissue (bust) has its own
+damped-spring solver driven by the chest's acceleration, approximated by tuned spring chains
+in VRM exports.
 
 ## 6. Poses and expressions
 

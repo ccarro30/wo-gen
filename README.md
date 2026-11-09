@@ -14,7 +14,7 @@ See [docs/roadmap.md](docs/roadmap.md) for what's done, known issues and next st
 | Generate | 11 body + 8 face parameters (eyes, face shape, brows, nose, mouth), 8 hairstyles, hair/eye/skin palette, outfit sets with mix-and-match and per-layer tints; adult-proportion rule enforced |
 | Look | EEVEE cel shading (ZZZ-like), colored outlines, brows through bangs, bloom/grade |
 | Pose | 19 poses (arm + leg IK), 24 expressions (incl. mouth shapes and blink), gaze, props, saved custom poses; arms kept out of skirts |
-| Motion | Keyed presets, chains and seamless loops, BVH motion capture (foot locking, procedural fingers), spring-bone physics for hair and skirts, MP4 clips/turntables |
+| Motion | Keyed presets, chains and seamless loops, BVH motion capture (foot locking, procedural fingers), spring-bone physics for hair and skirts, soft-tissue bust physics, MP4 clips/turntables |
 | Output | PNG, MP4, `.blend`, VRM 1.0 (MToon + springs), FBX |
 
 ## Quick start
@@ -87,7 +87,7 @@ Review helpers: `render.expression_sheet()`, `pose_sheet()`, `garment_sheet()`,
 ```
 blender/modules/wogen/   the package (importable by the CLI, headless Blender and MCP)
   *.py                   pure Python: specs, body params, catalog, poses, expressions, motions,
-                         hands, footlock, bvh, garment naming, CLI
+                         hands, footlock, softtissue, bvh, garment naming, CLI
   bl/*.py                Blender code: character, toon, overlay, face_shading, body, outfit,
                          hair, garment_rig, face, pose, clearance, anim, mocap, physics,
                          render, post, props, generate, export, jobs

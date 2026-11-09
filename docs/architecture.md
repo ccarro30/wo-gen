@@ -47,6 +47,7 @@ Pure modules (no `bpy`, unit-tested):
 | `poses` | Pose format, mirroring, hand shapes, IK entries, library, TOML save/load |
 | `hands` | Procedural finger animation (open / relaxed / loose fist from the motion) |
 | `footlock` | Foot-contact detection and lock offsets for retargeted motion |
+| `softtissue` | Damped-spring soft-tissue (bust) response to the chest's acceleration |
 | `bvh` | BVH parser, mocap clip catalog (`assets/mocap/manifest.json`), CMU → humanoid bone map |
 | `motions` | Motion presets and generators (turn, hop, spin, sway, walk, run, loops), chains, per-preset clip options |
 | `expressions` | Expression presets over VroidStudio `Fcl_*` face keys |
@@ -71,7 +72,7 @@ Blender modules (`wogen.bl`):
 | `clearance` | Moves forearms/hands out of skirts and dresses after posing |
 | `anim` | Keys sequences and chains (incl. mocap segments), per-frame foot planting, stepping transitions, loops |
 | `mocap` | BVH retargeting, floor pass, foot locking, procedural fingers, per-frame skirt clearance |
-| `physics` | VRM SpringBone 1.0 solver baked to keyframes (character + garment chains, limb colliders, carry); skirt settle for stills |
+| `physics` | VRM SpringBone 1.0 solver baked to keyframes (character + garment chains, limb colliders, carry), soft-tissue bust bake; skirt settle for stills |
 | `render` | Portrait camera/lights/world, turntable, clips, contact sheets |
 | `post` | Compositor: bloom, chromatic aberration, grade, vignette |
 | `props` | Simple props (seat) with a flat-color outline (`toon.add_flat_outline`) |
@@ -200,10 +201,23 @@ Generated characters carry `wg_generated` (resolved spec + params) on the armatu
     T-pose colliders don't push the authored hair out when the arms are down.
   - `limb_colliders` (default on) adds spheres along the legs, forearms and hands to every
     chain, with their slack measured on the T-pose, so hands push skirts and hair aside.
-  - `carry` (travel clips) shifts every chain by the hips' movement each frame (all three
-    axes today), `substeps` subdivides fast motion, and `overrides` tune chains by VRM name.
-    The bust default (`{"Bust": drag 0.3}`) is too rigid; replacing it with a soft-tissue
-    solver is on the roadmap.
+  - `carry` (travel clips) shifts every chain by the hips' horizontal movement each frame
+    (never vertical, so footfalls still bounce the hair), `substeps` subdivides fast motion,
+    and `overrides` tune chains by VRM name.
+  - **Soft tissue** (`soft_tissue`, default on; pure `softtissue.py`): the VRM "Bust"
+    chains are left out of the spring solve. Instead each side's anchor (where the upper
+    chest carries `Bust2`'s head) is sampled per frame. Its acceleration, rotated into the
+    chest's rest frame, drives three damped oscillators (lateral/depth/vertical; about
+    2.2 Hz vertical, damping ratio 0.2, mostly vertical gain). Posture also shifts the rest
+    sag (gravity in the chest frame, weighted 0.4). The offset is soft-clamped (tanh) at the
+    chain's tip. It is applied to `Bust1` alone: VroidStudio weights the breast only partly
+    to it (0.83 at the centre, falling off toward the chest) and barely to `Bust2`. So 60 %
+    of the offset becomes a translation, which shifts the whole weighted area as one mass,
+    and the rest a swing about its base. Drops are scaled to 70 %, because a full drop
+    creases the underside. Gains are set so a walk moves about 1 cm at the tip while hops and
+    jumps reach the clamp. Bigger busts get more gain, a lower frequency and less damping
+    (bouncier); smaller ones the reverse (firmer). Export writes `BUST_SPRING_PARAMS` (drag 0.15) into
+    the VRM bust chains as an approximation, and `soft_tissue=False` bakes with them too.
 - **Mocap** (`bvh.py` pure parser + catalog; `bl/mocap.py`): CMU BVH frame 0 is a T-pose, as
   is our rest. Per mapped joint the motion is the world rotation relative to that frame,
   converted from BVH axes (Y up, facing +Z) to ours and applied over the bone's rest:

@@ -323,16 +323,17 @@ def _close_spring_loop(start: int, end: int) -> int:
         return 0
     joints = {j.bone for sp in physics._springs(arm, physics.PhysicsSettings()) for j in sp.joints}
     closed = 0
-    for bone in joints:
-        path = f'pose.bones["{bone}"].rotation_quaternion'
-        curves = [bag.fcurves.find(path, index=i) for i in range(4)]
+    channels = [(bone, prop, n) for bone in joints
+                for prop, n in (("rotation_quaternion", 4), ("location", 3))]  # bust: location
+    for bone, prop, n in channels:
+        curves = [bag.fcurves.find(f'pose.bones["{bone}"].{prop}', index=i) for i in range(n)]
         if any(c is None for c in curves):
             continue
-        q0 = Quaternion([c.evaluate(start) for c in curves])
-        q1 = Quaternion([c.evaluate(end) for c in curves])
-        if q0.dot(q1) < 0:
-            q1.negate()
-        error = [a - b for a, b in zip(q0, q1)]
+        v0 = [c.evaluate(start) for c in curves]
+        v1 = [c.evaluate(end) for c in curves]
+        if n == 4 and Quaternion(v0).dot(Quaternion(v1)) < 0:
+            v1 = [-v for v in v1]
+        error = [a - b for a, b in zip(v0, v1)]
         span = end - start
         for c, err in zip(curves, error):
             for kp in c.keyframe_points:
