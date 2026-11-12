@@ -64,3 +64,67 @@ def contact_offsets(samples: list[dict[str, Vec3]], floor: float, fps: float) ->
         pivot_prev = pivot
         out.append(c)
     return out
+
+
+FLOOR_WINDOW = 1.0        # s: one contact sample (the window's low) per window of this length
+FLOOR_LOW = 0.05          # share of frames whose lowest sole may dip below the fitted floor
+FLOOR_AIRBORNE = 0.02     # m: windows this far above the trend (jumps) are left out of the fit
+FLOOR_GAIN = 0.005        # m: a slope must cut the contacts' scatter this much (and by half)
+FLOOR_MAX_DRIFT = 0.05    # m/s: the steepest floor drift accepted
+
+
+def _low(values: list[float], share: float) -> float:
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, int(len(ordered) * share))]
+
+
+def _rms(values: list[float]) -> float:
+    return math.sqrt(sum(v * v for v in values) / len(values))
+
+
+def _fit_line(lows: list[float], size: int) -> tuple[float, float, float]:
+    """(offset, slope per frame, scatter gain) of a line through each window's low, airborne
+    windows dropped; the gain is how much it cuts the lows' scatter against a level floor."""
+    n = len(lows)
+    points = [(s + (size - 1) / 2, _low(lows[s:s + size], FLOOR_LOW))
+              for s in list(range(0, n - size + 1, size)) + ([n - size] if n % size else [])]
+    slope = offset = 0.0
+    for _ in range(3):
+        mx = sum(t for t, _ in points) / len(points)
+        my = sum(z for _, z in points) / len(points)
+        var = sum((t - mx) ** 2 for t, _ in points)
+        slope = sum((t - mx) * (z - my) for t, z in points) / var if var > 0 else 0.0
+        offset = my - slope * mx
+        kept = [(t, z) for t, z in points if z - (offset + slope * t) < FLOOR_AIRBORNE]
+        if len(kept) == len(points) or len(kept) < 2:
+            break
+        points = kept
+    my = sum(z for _, z in points) / len(points)
+    level = _rms([z - my for _, z in points])
+    sloped = _rms([z - (offset + slope * t) for t, z in points])
+    gain = level - sloped if sloped <= 0.5 * level else 0.0
+    return offset, slope, gain
+
+
+def floor_trend(lows: list[float], fps: float) -> list[float]:
+    """Per frame, the height of the floor the clip was captured on, from each frame's lowest
+    sole point. Capture floors aren't always level (a CMU walk climbs ~6 cm in 2.6 s), so a
+    line in time is fitted through the low of each ``FLOOR_WINDOW``, leaving out windows
+    well above it (airborne); a second fit on what's left after removing it takes out the
+    bias of a window's low sitting at its lower end. The slope is kept only if it clearly
+    explains the contacts (``FLOOR_GAIN``); the height is then the low ``FLOOR_LOW`` share
+    of all frames with the slope removed, as for a level floor. Clips shorter than two
+    windows are level."""
+    n = len(lows)
+    size = max(1, round(FLOOR_WINDOW * fps))
+    slope = 0.0
+    if n >= 2 * size:
+        offset, slope, gain = _fit_line(lows, size)
+        if gain < FLOOR_GAIN:
+            slope = 0.0
+        else:
+            slope += _fit_line([z - (offset + slope * i) for i, z in enumerate(lows)], size)[1]
+            limit = FLOOR_MAX_DRIFT / fps
+            slope = max(-limit, min(limit, slope))
+    offset = _low([z - slope * i for i, z in enumerate(lows)], FLOOR_LOW)
+    return [offset + slope * i for i in range(n)]

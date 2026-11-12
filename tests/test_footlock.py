@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 from wogen import footlock as F
@@ -55,3 +57,23 @@ def test_floor_height_is_respected():
     samples = [_foot((0.0, -0.02 * i, 0.03), (0.0, -0.2, 0.06)) for i in range(4)]
     held = _held(samples, F.contact_offsets(samples, 0.03, FPS), "heel")
     assert all(p == pytest.approx((0.0, 0.0)) for p in held)
+
+
+def test_floor_trend_follows_a_sloped_capture_floor():
+    # A walk on a floor rising 6 cm over 3 s; each step's swing lifts the lowest sole a bit.
+    lows = [0.06 * i / 72 + (0.004 if i % 12 < 3 else 0.0) for i in range(72)]
+    trend = F.floor_trend(lows, FPS)
+    assert abs(trend[0]) < 0.002 and abs(trend[-1] - 0.06 * 71 / 72) < 0.002
+
+
+def test_floor_trend_keeps_a_noisy_level_floor_level():
+    lows = [0.004 * ((i * 7) % 5) / 4 for i in range(192)]       # contact jitter, no drift
+    trend = F.floor_trend(lows, FPS)
+    assert len(set(trend)) == 1
+
+
+def test_floor_trend_ignores_jumps_and_short_clips_are_level():
+    lows = [0.0] * 96
+    lows[30:54] = [0.3] * 24                       # a one-second jump
+    assert max(abs(z) for z in F.floor_trend(lows, FPS)) < 1e-9
+    assert F.floor_trend([0.02, 0.01, 0.03], FPS) == [0.01] * 3

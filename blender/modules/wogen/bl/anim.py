@@ -321,10 +321,10 @@ def _close_spring_loop(start: int, end: int) -> int:
     bag = channelbag(arm)
     if bag is None:
         return 0
-    joints = {j.bone for sp in physics._springs(arm, physics.PhysicsSettings()) for j in sp.joints}
+    joints = set(physics.spring_bone_names(arm))      # chains, bust and tissue helper bones
     closed = 0
     channels = [(bone, prop, n) for bone in joints
-                for prop, n in (("rotation_quaternion", 4), ("location", 3))]  # bust: location
+                for prop, n in (("rotation_quaternion", 4), ("location", 3))]  # tissue: location
     for bone, prop, n in channels:
         curves = [bag.fcurves.find(f'pose.bones["{bone}"].{prop}', index=i) for i in range(n)]
         if any(c is None for c in curves):

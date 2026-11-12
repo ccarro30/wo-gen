@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
+from ..drift import drift
 from ..softtissue import TissueParams
 from .anim import remove_fcurves
 
@@ -44,6 +45,15 @@ BUST_SPRING = "Bust"            # VroidStudio's spring name for the breast chain
 # VRM spring approximation of the soft-tissue bounce, written into exported VRMs (VRM can only
 # store spring chains). VroidStudio's own drag 0.05 rings for too long; 0.3 was rigid.
 BUST_SPRING_PARAMS = {"drag_force": 0.15, "stiffness": 0.75}
+
+
+def bust_spring_params(bust: float = 1.0) -> dict[str, float]:
+    """``BUST_SPRING_PARAMS`` for the ``bust`` slider, scaled as ``softtissue.for_size``
+    scales the bake. A VRM spring's stiffness acts like frequency squared (times dt) and its
+    drag like damping ratio times frequency, so frequency * s^-0.3 and damping * s^0.3 give
+    stiffness * s^-0.6 and an unchanged drag."""
+    s = max(0.5, bust)
+    return {**BUST_SPRING_PARAMS, "stiffness": BUST_SPRING_PARAMS["stiffness"] * s ** -0.6}
 
 
 @dataclass
@@ -72,6 +82,22 @@ class PhysicsSettings:
     # chain: a tuned damped bounce driven by the chest's acceleration.
     soft_tissue: bool = True
     tissue: TissueParams = field(default_factory=TissueParams)
+    # Butt, thighs and belly too: helper bones (``wogen.bl.tissue_rig``, added on the first
+    # bake) driven by the same solver with ``softtissue.REGIONS``. Needs ``soft_tissue``.
+    lower_body: bool = True
+    # Left/right variation of the soft tissue (``softtissue.vary``), seeded by the character's
+    # seed, so the two sides don't move as exact mirror images. 0 = symmetric.
+    tissue_variation: float = 1.0
+    # Idle drift (``wogen.drift``): a slow, seeded push on spring chains, like a light
+    # breeze, so hair and skirts are never dead still between moves. In gravity-power units
+    # for hair; other chains (skirts, ribbons) get ``drift_cloth`` of it. 0 turns it off.
+    drift: float = 0.05           # hair tips sway ~1 cm (long hair ~2 cm), skirt hems ~4 mm
+    drift_cloth: float = 0.3
+    drift_seed: int = 0
+    # Hair stiffness from root to tip, as multipliers of VroidStudio's per-chain value: a
+    # firmer root and looser tips, so long hair bends along its length instead of swinging
+    # from the scalp like a board. (1.0, 1.0) keeps the exported values.
+    hair_taper: tuple[float, float] = (1.5, 0.7)
 
 
 @dataclass
@@ -101,8 +127,16 @@ class _Spring:
     colliders: list[tuple[object, float]]
 
 
+def _vrm_springs(arm: bpy.types.Object):
+    """The armature's VRM spring-bone data, or None (imported MMD rigs; VRM add-on off)."""
+    ext = getattr(arm.data, "vrm_addon_extension", None)
+    return ext.spring_bone1 if ext is not None else None
+
+
 def _springs(arm: bpy.types.Object, settings: PhysicsSettings) -> list[_Spring]:
-    sb = arm.data.vrm_addon_extension.spring_bone1
+    sb = _vrm_springs(arm)
+    if sb is None:
+        return []
     groups = {g.uuid: g for g in sb.collider_groups}
     colliders = {c.uuid: c for c in sb.colliders}
     out = []
@@ -166,12 +200,32 @@ def _garment_springs(arm: bpy.types.Object, settings: PhysicsSettings) -> list[_
     return out
 
 
+def _is_hair(spring: _Spring) -> bool:
+    """Hair chain (base hair or a library hairstyle): VroidStudio names its bones
+    ``J_Sec_Hair..`` (prefixed ``hair_N.`` on harvested hairstyles)."""
+    return any("J_Sec_Hair" in j.bone for j in spring.joints)
+
+
+def _taper_hair(springs: list[_Spring], taper: tuple[float, float]) -> None:
+    """Scale hair joints' stiffness from ``taper[0]`` at the root to ``taper[1]`` at the tip."""
+    root, tip = taper
+    for sp in springs:
+        if not _is_hair(sp):
+            continue
+        n = len(sp.joints)
+        for i, j in enumerate(sp.joints):
+            t = i / (n - 1) if n > 1 else 0.0
+            j.stiffness *= root + (tip - root) * t
+
+
 def spring_bone_names(arm: bpy.types.Object | None = None) -> list[str]:
     from .character import character_armature
     arm = arm or character_armature()
-    sb = arm.data.vrm_addon_extension.spring_bone1
-    names = [j.node.bone_name for sp in sb.springs for j in sp.joints]
+    sb = _vrm_springs(arm)
+    names = [j.node.bone_name for sp in sb.springs for j in sp.joints] if sb else []
     names += [j.bone for sp in _garment_springs(arm, PhysicsSettings()) for j in sp.joints]
+    from . import tissue_rig
+    names += [h["bone"] for h in tissue_rig.helpers(arm)]     # soft-tissue helper bones
     return names
 
 
@@ -199,7 +253,7 @@ def _init_joint(arm, j: _Joint) -> None:
 
 
 def _step_spring(arm, spring: _Spring, dt: float, centers: list[tuple[Vector, float]],
-                 write: bool) -> None:
+                 write: bool, push: Vector | None = None) -> None:
     first = arm.pose.bones[spring.joints[0].bone]
     parent_mat = first.parent.matrix.copy() if first.parent else Matrix.Identity(4)
     parent_rest_q = (first.parent.bone.matrix_local.to_quaternion() if first.parent
@@ -215,6 +269,8 @@ def _step_spring(arm, spring: _Spring, dt: float, centers: list[tuple[Vector, fl
 
         inertia = (j.tail - j.prev_tail) * (1.0 - j.drag)
         nxt = j.tail + inertia + rest_dir * (dt * j.stiffness) + j.gravity_dir * (dt * j.gravity_power)
+        if push is not None:
+            nxt += push * dt
         nxt = head + (nxt - head).normalized() * j.length
         for ci, (center, radius) in enumerate(centers):
             d = nxt - center
@@ -276,11 +332,30 @@ def bake(settings: PhysicsSettings | None = None, frame_start: int | None = None
     arm = character_armature()
     start = scene.frame_start if frame_start is None else frame_start
     end = scene.frame_end if frame_end is None else frame_end
+    from . import mmd_import
+    if mmd_import.has_physics(arm):          # imported model: its own rigid-body physics
+        msg = mmd_import.simulate(start, end)
+        bones = mmd_import.tissue_bones(arm)
+        if settings.soft_tissue and bones:   # the breasts: our solver (release_bust)
+            tissue = _Tissue(arm, settings.tissue, False, settings.tissue_variation, bones)
+            for frame in range(scene.frame_start, scene.frame_end + 1):
+                scene.frame_set(frame)
+                tissue.sample()
+            tissue.key(scene.frame_start, scene.render.fps / scene.render.fps_base)
+            scene.frame_set(scene.frame_start)
+            msg += f" + soft tissue ({len(bones)} bones)"
+        return msg
     clear(arm)
     springs = _springs(arm, settings)
     if settings.soft_tissue:
         springs = [sp for sp in springs if sp.name != BUST_SPRING]
-    tissue = _Tissue(arm, settings.tissue) if settings.soft_tissue else None
+    _taper_hair(springs, settings.hair_taper)
+    # Imported (MMD) rigs carry their skin weights on D-bones the helpers don't split yet
+    # (roadmap step 2), so they get no lower-body tissue for now.
+    from .mmd_import import SOURCE_KEY
+    lower_body = settings.lower_body and SOURCE_KEY not in arm
+    tissue = (_Tissue(arm, settings.tissue, lower_body, settings.tissue_variation)
+              if settings.soft_tissue else None)
     limbs = _limb_colliders(arm) if settings.limb_colliders else []
     limb_from = {}
     for sp in springs:
@@ -312,7 +387,11 @@ def bake(settings: PhysicsSettings | None = None, frame_start: int | None = None
         for sp in springs:
             _step_spring(arm, sp, dt, centers(sp), write=False)
     keyed = 0
-    hips = arm.pose.bones.get("J_Bip_C_Hips")
+    fps = scene.render.fps / scene.render.fps_base
+    drift_scale = {id(sp): settings.drift * (1.0 if _is_hair(sp) else settings.drift_cloth)
+                   for sp in springs}
+    from .pose import humanoid_bone
+    hips = arm.pose.bones.get(humanoid_bone(arm, "hips", ""))
     last_center = hips.head.copy() if hips is not None else None
     for frame in range(start, end + 1):
         scene.frame_set(frame)
@@ -327,10 +406,13 @@ def bake(settings: PhysicsSettings | None = None, frame_start: int | None = None
                     if j.tail is not None:
                         j.tail = j.tail + shift
                         j.prev_tail = j.prev_tail + shift
+        wind = (Vector(drift((frame - start) / fps, settings.drift_seed)) if settings.drift
+                else None)
         for sp in springs:
             cs = centers(sp)
+            push = wind * drift_scale[id(sp)] if wind is not None else None
             for s in range(settings.substeps):
-                _step_spring(arm, sp, dt, cs, write=(s == settings.substeps - 1))
+                _step_spring(arm, sp, dt, cs, write=(s == settings.substeps - 1), push=push)
             for j in sp.joints:
                 arm.pose.bones[j.bone].keyframe_insert("rotation_quaternion", frame=frame)
                 keyed += 1
@@ -338,7 +420,7 @@ def bake(settings: PhysicsSettings | None = None, frame_start: int | None = None
     extra = ""
     if tissue is not None and tissue.sides:
         tissue.key(start, scene.render.fps / scene.render.fps_base)
-        extra = f" + soft tissue ({len(tissue.sides)} sides)"
+        extra = f" + soft tissue ({len(tissue.sides)} bones)"
         scene.frame_set(start)
     return (f"baked {len(springs)} springs "
             f"({sum(len(s.joints) for s in springs)} joints){extra} over frames {start}-{end}")
@@ -355,28 +437,58 @@ TISSUE_DROP = 0.7
 
 
 class _Tissue:
-    """Breast secondary motion: samples each side's anchor (where the chest carries the
-    bust) per frame, then simulates and keys the ``Bust1`` bones (location + rotation)."""
+    """Soft-tissue secondary motion. Samples each part's anchor (where its parent bone
+    carries it) per frame, then simulates and keys the bones: the ``Bust1`` bones (location +
+    rotation) and, with ``lower_body``, the helper bones of ``wogen.bl.tissue_rig`` (butt,
+    thighs, belly; location only)."""
 
-    def __init__(self, arm, params: TissueParams):
+    def __init__(self, arm, params: TissueParams, lower_body: bool = True,
+                 variation: float = 1.0, bust_bones: list[str] | None = None):
+        """``bust_bones`` drives those bones (an imported model's, ``mmd_import.release_bust``;
+        anchored at the bone's tail) instead of VroidStudio's ``Bust1`` chains."""
         import json
         from .. import softtissue
         from .body import PARAMS_KEY
+        from .generate import GENERATED_KEY
         self.arm = arm
-        bust = json.loads(arm.get(PARAMS_KEY, "{}")).get("bust", 1.0)
-        self.params = softtissue.for_size(params, bust)
+        body = json.loads(arm.get(PARAMS_KEY, "{}"))
+        seed = int(json.loads(arm.get(GENERATED_KEY, "{}")).get("seed") or 0)
+        bust_params = softtissue.for_size(params, body.get("bust", 1.0))
         self.sides = []
-        for b in arm.data.bones:
-            if not (b.name.endswith("Bust1") and b.children and b.parent):
-                continue
-            mid = b.children[0]
-            tip = mid.children[0].head_local if mid.children else mid.tail_local
+        if bust_bones is not None:
+            chains = [(arm.data.bones[n], arm.data.bones[n].tail_local, arm.data.bones[n].tail_local)
+                      for n in bust_bones]
+        else:
+            chains = []
+            for b in arm.data.bones:
+                if b.name.endswith("Bust1") and b.children and b.parent:
+                    mid = b.children[0]
+                    tip = mid.children[0].head_local if mid.children else mid.tail_local
+                    chains.append((b, mid.head_local, tip))
+        for b, anchor, tip in chains:
             chest = b.parent
             self.sides.append({
                 "bone": b.name, "chest": chest.name,
-                "anchor": chest.matrix_local.inverted() @ mid.head_local,   # chest-local
+                "params": softtissue.vary(bust_params, seed, b.name, variation),
+                "anchor": chest.matrix_local.inverted() @ anchor,           # chest-local
                 "chest_rest_q": chest.matrix_local.to_quaternion(),
                 "lever": tip - b.head_local,                                # rest frame
+                "rest_q": b.matrix_local.to_quaternion(),
+                "pos": [], "rot": []})
+        if not lower_body:
+            return
+        from . import tissue_rig
+        tissue_rig.ensure(arm)
+        regions = {r.name: r for r in softtissue.REGIONS}
+        for h in tissue_rig.helpers(arm):
+            b = arm.data.bones[h["bone"]]
+            self.sides.append({
+                "bone": b.name, "chest": b.parent.name,
+                "params": softtissue.vary(softtissue.region_params(regions[h["region"]], body),
+                                          seed, b.name, variation),
+                "anchor": b.parent.matrix_local.inverted() @ b.head_local,
+                "chest_rest_q": b.parent.matrix_local.to_quaternion(),
+                "lever": None,                                 # helpers only shift
                 "rest_q": b.matrix_local.to_quaternion(),
                 "pos": [], "rot": []})
 
@@ -390,22 +502,26 @@ class _Tissue:
 
     def offsets(self, side: dict, fps: float) -> list[tuple[float, float, float]]:
         from .. import softtissue
-        acc = softtissue.accelerations(side["pos"], fps)
+        acc = softtissue.accelerations(side["pos"], fps, side["params"].drive_window)
         inv = [q.inverted() for q in side["rot"]]
         local = [tuple(q @ Vector(a)) for q, a in zip(inv, acc)]
         grav = [tuple(q @ Vector(softtissue.GRAVITY)) for q in inv]
-        return softtissue.simulate(local, fps, self.params, grav)
+        return softtissue.simulate(local, fps, side["params"], grav)
 
     @staticmethod
     def pose(arm, side: dict, offset) -> None:
-        """Pose one side's bust bone for a tissue offset (rest frame, at the chain's tip)."""
+        """Pose one part's bone for a tissue offset (rest frame): a bust bone (offset at the
+        chain's tip), or a helper bone (the offset is its shift)."""
         off = Vector(offset)
+        lever, rq = side["lever"], side["rest_q"]
+        pb = arm.pose.bones[side["bone"]]
+        if lever is None:
+            pb.location = rq.inverted() @ off
+            return
         if off.z < 0:
             off.z *= TISSUE_DROP
-        lever, rq = side["lever"], side["rest_q"]
         move = off * TISSUE_TRANSLATE
         q = lever.rotation_difference(lever + off - move)
-        pb = arm.pose.bones[side["bone"]]
         pb.rotation_mode = "QUATERNION"
         # Rest-frame motion as bone-local basis values (as in _step_spring).
         pb.rotation_quaternion = rq.inverted() @ q @ rq
@@ -416,7 +532,8 @@ class _Tissue:
             pb = self.arm.pose.bones[s["bone"]]
             for i, off in enumerate(self.offsets(s, fps)):
                 self.pose(self.arm, s, off)
-                pb.keyframe_insert("rotation_quaternion", frame=start + i)
+                if s["lever"] is not None:
+                    pb.keyframe_insert("rotation_quaternion", frame=start + i)
                 pb.keyframe_insert("location", frame=start + i)
 
 
@@ -448,22 +565,35 @@ def _limb_colliders(arm) -> list[tuple[tuple[str, Vector], float]]:
 
 
 def settle(steps: int = 48, settings: PhysicsSettings | None = None,
-           garments_only: bool = True) -> str:
-    """Drape skirts (garment spring chains) around the current static pose.
+           garments_only: bool = False) -> str:
+    """Drape skirts and hair around the current static pose, and let the bust hang with it.
 
     Stills never run a bake, so skirts keep their standing shape while thighs move through
-    them. This replays the move from the standing rest pose into the current pose over the
-    first two thirds of ``steps`` (so a rising thigh carries the skirt up and over instead of
-    piercing it), then holds, and writes the final spring rotations (no keys). Legs get
-    full-length colliders. Collider slack is measured on the standing rest pose.
-    Called by ``pose.apply_pose`` for unkeyed poses; clips use ``bake``.
+    them, and hair stays upright under a tilted head. This replays the move from the
+    standing rest pose into the current pose over the first two thirds of ``steps`` (so a
+    rising thigh carries the skirt up and over instead of piercing it), then holds, and
+    writes the final spring rotations (no keys). Legs get full-length colliders. Collider
+    slack is measured on the standing rest pose. ``garments_only`` skips the base model's
+    own chains (its hair). The bust takes the soft-tissue solver's rest offset for the
+    posture (a bow lets it hang forward). Called by ``pose.apply_pose`` for unkeyed poses;
+    clips use ``bake``.
     """
     from .character import character_armature
     settings = settings or PhysicsSettings()
     scene = bpy.context.scene
     arm = character_armature()
+    from . import mmd_import
+    if mmd_import.has_physics(arm):          # imported model: settle its rigid bodies
+        return mmd_import.simulate(scene.frame_current, scene.frame_current, lead_in=steps)
     springs = (_garment_springs(arm, settings) if garments_only else _springs(arm, settings))
-    if not springs:
+    springs = [sp for sp in springs if sp.name != BUST_SPRING]
+    _taper_hair(springs, settings.hair_taper)
+    tissue = None
+    if settings.soft_tissue and not garments_only:
+        tissue = _Tissue(arm, settings.tissue, lower_body=False)
+        for side in tissue.sides:
+            arm.pose.bones[side["bone"]].matrix_basis = Matrix.Identity(4)
+    if not springs and not tissue:
         return "no spring chains to settle"
     legs = _leg_colliders(arm)
     for sp in springs:
@@ -514,4 +644,12 @@ def settle(steps: int = 48, settings: PhysicsSettings | None = None,
     blend(1.0)
     arm.location.z = arm_z
     bpy.context.view_layer.update()
-    return f"settled {len(springs)} chains over {steps} steps"
+    extra = ""
+    if tissue is not None and tissue.sides:
+        fps = scene.render.fps / scene.render.fps_base
+        tissue.sample()                      # one frame: the rest offset for this posture
+        for side in tissue.sides:
+            _Tissue.pose(arm, side, tissue.offsets(side, fps)[0])
+        bpy.context.view_layer.update()
+        extra = f" + bust ({len(tissue.sides)} bones)"
+    return f"settled {len(springs)} chains over {steps} steps{extra}"

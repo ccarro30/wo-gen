@@ -68,3 +68,15 @@ def test_default_spec_picks_a_hairstyle(seed):
     from wogen.paths import REPO_ROOT
     p = B.from_spec(S.resolve(S.load_spec(REPO_ROOT / "specs" / "default.toml"), seed))
     assert p.hair and p.hair.startswith("hair_")
+
+
+def test_shapes_follow_their_size_slider():
+    curvy = B.shape_amounts(B.BodyParams(hip_width=1.10, thigh=1.12))
+    assert curvy == pytest.approx({k: v for k, (_, v) in B.SHAPES.items()})   # as tuned
+    slim = B.shape_amounts(B.BodyParams(hip_width=0.92, thigh=0.90))
+    assert all(v == 0 for v in slim.values())
+    base = B.shape_amounts(B.BodyParams())
+    assert 0 < base["seat"] < curvy["seat"] and 0 < base["thigh_gap"] < curvy["thigh_gap"]
+    flat = B.shape_amounts(B.BodyParams(hip_width=1.10, seat=0.0, thigh_gap=2.0))
+    assert flat["seat"] == 0 and flat["thigh_gap"] == pytest.approx(0.9 * 2 * 0.4545, rel=1e-3)
+    assert B.BodyParams(seat=1.5).is_identity()          # shapes aren't a size change

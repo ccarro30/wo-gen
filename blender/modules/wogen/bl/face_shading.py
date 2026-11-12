@@ -33,7 +33,7 @@ NORMAL_ATTR = "wg_face_normal"
 WEIGHT_ATTR = "wg_face_normal_w"
 MODIFIER = GROUP = "wg_face_normals"
 FRAME = "wg_head_frame"
-HEAD_BONE = "J_Bip_C_Head"
+HEAD_BONE = "J_Bip_C_Head"      # VRoid default; rigs resolve theirs with ``_head_bone``
 
 # Ellipsoid relative to the face skin's height (0.219 m on base_f01): centre behind the face
 # front and a little below mid-height; radii (X, Y, Z).
@@ -114,11 +114,17 @@ def _compute(face):
     return normals[loop_vert], weight[loop_vert] * skin_loop, orig
 
 
+def _head_bone(arm) -> str:
+    from .pose import humanoid_bone
+    return humanoid_bone(arm, "head", HEAD_BONE)
+
+
 def _head_frame(face, arm):
     """Empty that follows the head bone and has identity rotation (face space) at rest."""
     from mathutils import Matrix
     from .character import CHARACTER_COLLECTION
-    bone = arm.data.bones[HEAD_BONE]
+    head = _head_bone(arm)
+    bone = arm.data.bones[head]
     frame = bpy.data.objects.get(FRAME)
     if frame is None:
         frame = bpy.data.objects.new(FRAME, None)
@@ -128,7 +134,7 @@ def _head_frame(face, arm):
     frame.hide_viewport = frame.hide_render = True
     frame.parent = arm
     frame.parent_type = "BONE"
-    frame.parent_bone = HEAD_BONE
+    frame.parent_bone = head
     # Bone parenting attaches at the bone's tail; use the rest matrix, so the current pose
     # doesn't matter.
     rest = arm.matrix_world @ bone.matrix_local @ Matrix.Translation((0.0, bone.length, 0.0))
@@ -203,7 +209,7 @@ def setup_face_normals(face=None, armature=None) -> str:
     me.attributes[NORMAL_ATTR].data.foreach_set("vector", normals.astype(np.float32).ravel())
     me.attributes[WEIGHT_ATTR].data.foreach_set("value", weight.astype(np.float32))
     me.update()
-    if arm is None or HEAD_BONE not in arm.data.bones:
+    if arm is None or _head_bone(arm) not in arm.data.bones:
         return "face normals: baked (no head bone; render modifier skipped)"
     group = _build_group(_head_frame(face, arm))
     md = face.modifiers.get(MODIFIER) or face.modifiers.new(MODIFIER, "NODES")

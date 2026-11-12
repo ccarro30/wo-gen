@@ -11,6 +11,7 @@ Axes (character faces -Y, character's left is +X, up is +Z). Signs for the LEFT 
 =====================  =======================================================
 spine/chest/neck/head  X+ bend/nod forward, Y+ lean to her left, Z+ turn to her left
 left_upper_arm         Y+ lowers the arm, Z- swings it forward, Z+ back, X twists
+                       (lowered arms: ``swing()`` for forward/back)
 left_lower_arm         Z- bends the elbow forward (forearm toward the front)
 left_hand              Y+ flexes the palm down, Z- bends the hand forward
 left fingers           Y+ curls toward the palm, Z- spreads toward the front
@@ -40,6 +41,7 @@ target knees (``left_lower_leg``).
 
 from __future__ import annotations
 
+import math
 import tomllib
 from pathlib import Path
 from typing import Union
@@ -115,6 +117,32 @@ def _is_left(key: str) -> bool:
 def both(left: Pose) -> Pose:
     """A left-side pose plus its mirror on the right."""
     return {**left, **mirror({k: v for k, v in left.items() if _is_left(k)})}
+
+
+def _matrix(e: Euler) -> list[list[float]]:
+    """Rotation matrix of an XYZ euler in degrees (X applied first: Rz @ Ry @ Rx)."""
+    cx, cy, cz = (math.cos(math.radians(a)) for a in e)
+    sx, sy, sz = (math.sin(math.radians(a)) for a in e)
+    return [[cy * cz, sx * sy * cz - cx * sz, cx * sy * cz + sx * sz],
+            [cy * sz, sx * sy * sz + cx * cz, cx * sy * sz - sx * cz],
+            [-sy, sx * cy, cx * cy]]
+
+
+def _euler(m: list[list[float]]) -> Euler:
+    y = math.asin(max(-1.0, min(1.0, -m[2][0])))
+    if abs(math.cos(y)) > 1e-6:
+        x, z = math.atan2(m[2][1], m[2][2]), math.atan2(m[1][0], m[0][0])
+    else:                                           # gimbal lock: put it all in X
+        x, z = math.atan2(-m[1][2], m[1][1]), 0.0
+    return (math.degrees(x), math.degrees(y), math.degrees(z))
+
+
+def swing(e: Euler, pitch: float) -> Euler:
+    """``e`` followed by a turn of ``pitch`` degrees about the left-right (X) axis. X- swings
+    a lowered arm forward on either side. (A lowered arm hangs nearly along Z, so its own Z
+    only twists it a little: 20 degrees of Z move it about 6 degrees forward.)"""
+    a, b = _matrix((pitch, 0.0, 0.0)), _matrix(e)
+    return _euler([[sum(a[i][k] * b[k][j] for k in range(3)) for j in range(3)] for i in range(3)])
 
 
 def hand(side: str, curls: dict[str, tuple[float, float, float]],

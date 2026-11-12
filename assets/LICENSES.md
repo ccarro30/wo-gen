@@ -13,6 +13,38 @@ Update this file whenever an asset is added.
 | `assets/poses/*.toml` | Saved poses (`pose.save_pose`) | Repository owner | Own data |
 | `assets/mocap/cmu/*.bvh` | CMU Graphics Lab Motion Capture Database (mocap.cs.cmu.edu), BVH conversion by Bruce Hahne (2010), via github.com/una-dinosauria/cmu-mocap at the commit in `assets/mocap/manifest.json` | Third-party (CMU; conversion: B. Hahne) | "Free for use in research and commercial projects worldwide." Credit: "The data used in this project was obtained from mocap.cs.cmu.edu. The database was created with funding from NSF EIA-0196217." |
 
+## Imported characters (not in the repository)
+
+`imports/` holds officially released MMD (PMX) character models, downloaded by the
+repository owner from the publisher's public site. It is gitignored: these files are never
+committed, pushed or redistributed.
+
+| Path | Source | Author | Terms |
+|---|---|---|---|
+| `imports/*/*.pmx` + textures | Official MMD model releases (Zenless Zone Zero and other HoYoverse titles), publisher's website | Third-party (miHoYo/HoYoverse; modeler credited in each file) | The release terms below (personal, non-commercial use) |
+
+The terms are in each model's PMX comment (Chinese; `wogen.mmd_names.pmx_header` reads
+it). Translated from the Yidhari, Astra Yao, Ye Shunguang, Promeia, Lucia and Cissia
+packages, which share the same text:
+
+> Thank you for downloading this model.
+> - **Allowed:** improving the physics; fixing bugs in weights, expressions and so on;
+>   recoloring; moderately changing the outfit; adding sphere maps (spa) and toon ramps.
+> - **Not allowed:** redistributing it; taking parts out to modify other models; 18+ works,
+>   extreme religious propaganda, gory, horror or grotesque works, personal attacks and
+>   the like; commercial use.
+> - Any harm caused by someone else's use of the model is that user's responsibility, not
+>   the modeler's or miHoYo's.
+> - Final interpretation rights: miHoYo. Please follow these rules.
+
+⚠ The Norma and Remielle packages carry no terms in their files (their comments are
+"exported by mmd_tools" or a script); treat them under the same terms.
+
+How they're used (rendering and debugging locally, learning design ideas for original
+characters, never taking their parts) is in [CLAUDE.md](../CLAUDE.md) ("Imported
+characters"). Renders of imported characters stay in `out/` and are never committed or
+shared.
+
 ## Notes
 
 - The clothing, hair and face parts come from VroidStudio's built-in presets and items.
@@ -21,6 +53,6 @@ Update this file whenever an asset is added.
   verified here).
 - `references/` (third-party screenshots used as a style target) isn't an asset and is never
   committed.
-- The project is personal and never distributed. Third-party models (including copyrighted
-  characters) may be imported for personal use; list each one here as third-party with its
-  source, so it's never mistaken for an own asset.
+- The project is personal and never distributed. Third-party models are imported for
+  personal use only, under their own terms (see "Imported characters" above), and never
+  mixed into own assets.

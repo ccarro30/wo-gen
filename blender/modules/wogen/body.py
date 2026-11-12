@@ -26,7 +26,25 @@ BODY_RANGES: dict[str, tuple[float, float]] = {
     "thigh": (0.90, 1.12),
     "arm_thickness": (0.90, 1.10),
     "bust": (0.80, 1.30),
+    # Shape sliders (``SHAPES``): multipliers of the amount that suits the body's size.
+    **{name: (0.0, 2.0) for name in ("seat", "seat_round", "seat_fold", "hip_curve",
+                                      "thigh_upper", "thigh_back", "thigh_gap")},
 }
+
+# Shape sliders change the profile of the hips and thighs, not just their size (``wogen.bl
+# .shape`` displaces the mesh). Each follows a size slider: none at that slider's minimum,
+# growing linearly to the tuned amount at ``SHAPE_TUNED_ON`` (the curvy body they were judged
+# on, by eye, 2026-11-09). The shape slider itself (1.0 = as tuned) scales the result.
+SHAPES: dict[str, tuple[str, float]] = {
+    "seat": ("hip_width", 0.95),         # seat projection (25 mm at amount 1)
+    "seat_round": ("hip_width", 0.2),    # rounds the seat toward a sphere
+    "seat_fold": ("hip_width", 0.5),     # crease under the seat (8 mm)
+    "hip_curve": ("hip_width", 0.1),     # side-hip flare below the joint (15 mm)
+    "thigh_upper": ("thigh", 0.2),       # fullness in the upper third (+12 % radius)
+    "thigh_back": ("thigh", 0.25),       # back of the upper thigh under the seat (10 mm)
+    "thigh_gap": ("thigh", 0.9),         # inner thighs toward the midline (15 mm)
+}
+SHAPE_TUNED_ON = {"hip_width": 1.10, "thigh": 1.12}
 FACE_KEYS = ("eye_size", "eye_height", "face_width", "chin_length", "brow_height", "brow_tilt",
              "nose_size", "mouth_width")
 
@@ -48,9 +66,28 @@ class BodyParams:
     thigh: float = 1.0
     arm_thickness: float = 1.0
     bust: float = 1.0
+    seat: float = 1.0
+    seat_round: float = 1.0
+    seat_fold: float = 1.0
+    hip_curve: float = 1.0
+    thigh_upper: float = 1.0
+    thigh_back: float = 1.0
+    thigh_gap: float = 1.0
 
     def is_identity(self) -> bool:
-        return all(abs(getattr(self, f.name) - 1.0) < 1e-6 for f in fields(self))
+        """No size change (shapes are separate: see ``shape_amounts``)."""
+        return all(abs(getattr(self, f.name) - 1.0) < 1e-6 for f in fields(self)
+                   if f.name not in SHAPES)
+
+
+def shape_amounts(body: BodyParams) -> dict[str, float]:
+    """Displacement amount per shape (0 = none, 1 = the reference displacement)."""
+    out = {}
+    for name, (driver, tuned) in SHAPES.items():
+        lo = BODY_RANGES[driver][0]
+        fullness = max(0.0, (getattr(body, driver) - lo) / (SHAPE_TUNED_ON[driver] - lo))
+        out[name] = tuned * fullness * getattr(body, name)
+    return out
 
 
 @dataclass

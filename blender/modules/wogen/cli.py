@@ -34,6 +34,15 @@ def run_blender_job(command: str, rest: list[str]) -> int:
     if any(a in ("-h", "--help") for a in rest):
         return run_job(job, "--help")
     rest = list(rest)
+    if "--mmd" in rest[:-1]:                 # pick the model now: fail before Blender starts
+        from . import mmd
+        from .paths import REPO_ROOT
+        i = rest.index("--mmd")
+        try:
+            rest[i + 1] = str(mmd.find_model(rest[i + 1], REPO_ROOT / "imports").resolve())
+        except ValueError as e:
+            print(f"{command}: {e}", file=sys.stderr)
+            return 2
     if "--out" in rest:
         i = rest.index("--out")
         out = Path(rest[i + 1]).resolve()
@@ -78,6 +87,19 @@ def _cmd_mocap(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_mmd(args: argparse.Namespace) -> int:
+    from . import mmd
+    from .paths import REPO_ROOT
+    imports = REPO_ROOT / "imports"
+    models = mmd.list_models(imports) if imports.is_dir() else []
+    for path in models:
+        print(f"  {mmd.english_label(path, imports):60s} ({mmd.model_label(path, imports)})")
+    if not models:
+        print("No models: put PMX packages in imports/<folder>/ (see CLAUDE.md, imported characters)")
+    print("Use: wogen portrait|clip|turntable --mmd NAME  (a name, folder/name or .pmx path)")
+    return 0
+
+
 def _cmd_check(args: argparse.Namespace) -> int:
     from .catalog import check
     errors, warnings = check(spec_mod.load_spec(args.spec))
@@ -105,6 +127,9 @@ def _cmd_export(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):    # model names may not fit the console's code page
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] in BLENDER_JOBS:
         return run_blender_job(argv[0], argv[1:])
@@ -130,6 +155,9 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("mocap", help="List the motion-capture clips (assets/mocap/manifest.json)")
     p.set_defaults(func=_cmd_mocap)
+
+    p = sub.add_parser("mmd", help="List the imported MMD character models (imports/)")
+    p.set_defaults(func=_cmd_mmd)
 
     p = sub.add_parser("check", help="Strictly check a spec (unknown keys, ranges, asset names)")
     p.add_argument("spec")

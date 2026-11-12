@@ -15,6 +15,13 @@ import bpy
 Color = tuple[float, float, float]
 
 OUTLINE_MOD = "wg_outline"
+# Render-time smoothing (``add_smoothing``): the body is VroidStudio's low-poly triangle mesh
+# (about 11k triangles), which shows angles along the hips, seat and thighs. A Weld re-joins
+# the vertices that the VRM export splits along UV seams (2,094 open edges on the body), so
+# one level of subdivision rounds the surface without opening cracks along those seams.
+# Render only: export strips every modifier but the armature.
+WELD_MOD, SUBSURF_MOD = "wg_weld", "wg_subsurf"
+SMOOTH_MESHES = ("Body",)
 SOURCE_KEY = "wg_source"
 
 
@@ -485,6 +492,8 @@ def apply_toon(meshes: list[bpy.types.Object] | None = None, outline: bool = Tru
             converted[src.name] = classify(src.name)
         if outline:
             _add_outline(obj, sources, recolors)
+        if obj.name in SMOOTH_MESHES:
+            add_smoothing(obj)
     for params in restore_overlay:
         overlay.features_through_hair(**params)
     counts: dict[str, int] = {}
@@ -514,6 +523,23 @@ def _source_of(mat: bpy.types.Material | None) -> bpy.types.Material | None:
         return None
     src_name = mat.get(SOURCE_KEY)
     return bpy.data.materials.get(src_name) if src_name else mat
+
+
+def add_smoothing(obj: bpy.types.Object, levels: int = 1) -> None:
+    """Weld + one level of subdivision right after the armature (idempotent), so the posed
+    surface is smoothed and the outline hull follows the smooth surface."""
+    weld = obj.modifiers.get(WELD_MOD) or obj.modifiers.new(WELD_MOD, "WELD")
+    weld.merge_threshold = 1e-5
+    sub = obj.modifiers.get(SUBSURF_MOD) or obj.modifiers.new(SUBSURF_MOD, "SUBSURF")
+    sub.render_levels = levels
+    # Headless, nothing shows the viewport, but every frame change (bakes, foot locking)
+    # evaluates it: smoothing there doubled clip times. Final renders use render_levels.
+    sub.levels = 0 if bpy.app.background else levels
+    weld.show_viewport = not bpy.app.background
+    arm_mods = [i for i, md in enumerate(obj.modifiers) if md.type == "ARMATURE"]
+    after = arm_mods[0] + 1 if arm_mods else 0
+    obj.modifiers.move(obj.modifiers.find(WELD_MOD), after)
+    obj.modifiers.move(obj.modifiers.find(SUBSURF_MOD), after + 1)
 
 
 def _strip_outlines(obj: bpy.types.Object) -> None:

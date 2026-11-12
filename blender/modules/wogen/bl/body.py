@@ -113,16 +113,24 @@ def compute_transforms(arm: bpy.types.Object, params: BodyParams) -> tuple[dict,
 def deform_mesh(obj: bpy.types.Object, transforms: dict[str, Matrix], arm: bpy.types.Object,
                 parent_of: dict[str, str] | None = None) -> int:
     """Apply rest-space linear blend skinning to ``obj`` (all shape keys). Vertex groups that
-    aren't bones resolve through ``parent_of`` (garment-rig bones); unweighted vertices stay."""
+    aren't bones resolve through ``parent_of`` (garment-rig bones); deform bones missing from
+    ``transforms`` stay put (identity), as the Armature modifier would; unweighted vertices
+    and non-deform bones' groups are ignored."""
     to_arm = np.array(arm.matrix_world.inverted() @ obj.matrix_world, dtype=np.float64)
     from_arm = np.linalg.inv(to_arm)
     me = obj.data
     names = {vg.index: vg.name for vg in obj.vertex_groups}
+    bones = arm.data.bones
 
     def resolve(name):
+        bone = bones.get(name)
+        if bone is not None and not bone.use_deform:
+            return None
         seen = 0
         while name not in transforms and parent_of and name in parent_of and seen < 64:
             name, seen = parent_of[name], seen + 1
+        if name not in transforms and bone is not None:
+            return Matrix.Identity(4)
         return transforms.get(name)
 
     group_mats = {i: resolve(n) for i, n in names.items()}
@@ -189,9 +197,14 @@ def apply_body(params: BodyParams) -> str:
     arm = character_armature()
     if arm.get(PARAMS_KEY):
         raise RuntimeError("Body already applied to this character; re-import to change it")
+    from . import shape
+    from .outfit import body_mesh
+    from .. import body as body_mod
+    amounts = body_mod.shape_amounts(params)
     if params.is_identity():
         arm[PARAMS_KEY] = json.dumps(params.__dict__)
-        return "body: base proportions"
+        shaped = shape.apply_body(body_mesh(), arm, amounts)
+        return f"body: base proportions, {shaped} vertices shaped"
     transforms, uniform = compute_transforms(arm, params)
     from .pose import reset_pose
     reset_pose(arm)
@@ -199,7 +212,9 @@ def apply_body(params: BodyParams) -> str:
     _move_bones(arm, transforms, uniform)
     arm[TRANSFORMS_KEY] = json.dumps({n: [list(r) for r in m] for n, m in transforms.items()})
     arm[PARAMS_KEY] = json.dumps(params.__dict__)
-    return f"body applied: {moved} vertices deformed, {len(transforms)} bones moved"
+    shaped = shape.apply_body(body_mesh(), arm, amounts)     # profile, on the fitted rest
+    return (f"body applied: {moved} vertices deformed, {len(transforms)} bones moved, "
+            f"{shaped} vertices shaped")
 
 
 def stored_transforms(arm: bpy.types.Object) -> dict[str, Matrix]:
@@ -208,12 +223,16 @@ def stored_transforms(arm: bpy.types.Object) -> dict[str, Matrix]:
 
 
 def fit_garment(garment: bpy.types.Object, arm: bpy.types.Object, rig: dict | None) -> None:
-    """Fit a garment loaded from the library to the current body (and its rig bones)."""
+    """Fit a garment loaded from the library to the current body (and its rig bones):
+    sizes first, then the body's shape offsets (``wogen.bl.shape``; not on hair)."""
     transforms = stored_transforms(arm)
-    if not transforms:
-        return
-    parent_of = {b["name"]: b["parent"] for b in (rig or {}).get("bones", []) if b["parent"]}
-    deform_mesh(garment, transforms, arm, parent_of)
+    if transforms:
+        parent_of = {b["name"]: b["parent"] for b in (rig or {}).get("bones", []) if b["parent"]}
+        deform_mesh(garment, transforms, arm, parent_of)
+    if garment.get("wg_slot") != "hair":
+        from . import shape
+        from .outfit import body_mesh
+        shape.fit_garment(garment, arm, body_mesh())
 
 
 def fit_rig(rig: dict, arm: bpy.types.Object) -> dict:

@@ -35,8 +35,13 @@ def _armature(armature: bpy.types.Object | None = None) -> bpy.types.Object:
 
 
 def humanoid_map(armature: bpy.types.Object | None = None) -> dict[str, str]:
-    """VRM humanoid name -> Blender bone name (from the VRM add-on's humanoid data)."""
+    """VRM humanoid name -> Blender bone name: the VRM add-on's humanoid data, or the map an
+    importer stored on the armature (``wg_humanoid``: MMD models, ``wogen.bl.mmd_import``)."""
     arm = _armature(armature)
+    stored = arm.get("wg_humanoid")
+    if stored:
+        import json
+        return json.loads(stored)
     bones = arm.data.vrm_addon_extension.vrm1.humanoid.human_bones
     out = {}
     for prop in bones.bl_rna.properties:
@@ -45,6 +50,12 @@ def humanoid_map(armature: bpy.types.Object | None = None) -> dict[str, str]:
         if node is not None and node.bone_name:
             out[prop.identifier] = node.bone_name
     return out
+
+
+def humanoid_bone(armature: bpy.types.Object | None, human: str, default: str | None = None) -> str | None:
+    """The armature's bone for VRM humanoid name ``human`` (``"head"``, ``"hips"``, ...), so
+    callers work on VRoid and imported (MMD) rigs alike; ``default`` if it isn't mapped."""
+    return humanoid_map(armature).get(human, default)
 
 
 def _rest_rotation(bone: bpy.types.Bone) -> Quaternion:

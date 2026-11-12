@@ -41,6 +41,13 @@ BODY_HELP = {
     "thigh": "thigh thickness",
     "arm_thickness": "arm thickness",
     "bust": "bust size",
+    "seat": "seat projection (1 = suits hip_width; 0 = flat)",
+    "seat_round": "seat roundness",
+    "seat_fold": "crease under the seat",
+    "hip_curve": "side-hip flare below the waist",
+    "thigh_upper": "fullness in the upper thigh (1 = suits thigh)",
+    "thigh_back": "back of the upper thigh, under the seat",
+    "thigh_gap": "closes the gap between the inner thighs",
 }
 FACE_HELP = {
     "eye_size": "-1 small/mature .. +1 large/cute",

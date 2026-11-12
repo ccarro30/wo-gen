@@ -11,10 +11,10 @@ See [docs/roadmap.md](docs/roadmap.md) for what's done, known issues and next st
 
 | | |
 |---|---|
-| Generate | 11 body + 8 face parameters (eyes, face shape, brows, nose, mouth), 8 hairstyles, hair/eye/skin palette, outfit sets with mix-and-match and per-layer tints; adult-proportion rule enforced |
+| Generate | 11 body size + 7 hip and thigh shape + 8 face parameters (eyes, face shape, brows, nose, mouth), 8 hairstyles, hair/eye/skin palette, outfit sets with mix-and-match and per-layer tints; adult-proportion rule enforced |
 | Look | EEVEE cel shading (ZZZ-like), colored outlines, brows through bangs, bloom/grade |
 | Pose | 19 poses (arm + leg IK), 24 expressions (incl. mouth shapes and blink), gaze, props, saved custom poses; arms kept out of skirts |
-| Motion | Keyed presets, chains and seamless loops, BVH motion capture (foot locking, procedural fingers), spring-bone physics for hair and skirts, soft-tissue bust physics, MP4 clips/turntables |
+| Motion | Keyed presets, chains and seamless loops, BVH motion capture (foot locking, procedural fingers), spring-bone physics for hair and skirts, soft-tissue physics (bust, butt, thighs, belly), MP4 clips/turntables |
 | Output | PNG, MP4, `.blend`, VRM 1.0 (MToon + springs), FBX |
 
 ## Quick start
@@ -37,9 +37,9 @@ lists every option.
 
 | Command | Does |
 |---|---|
-| `generate --spec S --seed N` | Seeded character → portrait. `--pose`, `--expression`, `--framing face\|bust\|full`, `--view-yaw`, `--save-blend F`, `--export F.vrm\|F.fbx` (repeatable) |
+| `generate --spec S --seed N` | Seeded character → portrait. `--pose`, `--expression`, `--framing face\|bust\|hips\|full`, `--view-yaw`, `--save-blend F`, `--export F.vrm\|F.fbx` (repeatable) |
 | `variants --seeds 1-8` | Contact sheet of seeds from a spec |
-| `portrait` | Portrait of the base or a generated character (`--framing face\|bust\|full`). Character options below |
+| `portrait` | Portrait of the base or a generated character (`--framing face\|bust\|hips\|full`). Character options below |
 | `turntable` | 360° MP4 |
 | `clip --preset NAME` | Keyed motion + baked physics → MP4 (`--no-physics`). Presets: `walk`, `run`, `spin`, `jump_for_joy`, `hop`, `wave_hello`, `blow_kiss`, `heart`, `bow`, `sway`, `look_around`; seamless loops `walk_loop`, `run_loop`; chain with commas (`wave_hello,walk,bow`), mocap included (`wave_hello,mocap:happy_walk,bow`) |
 | `clip --mocap NAME` | Motion capture retargeted onto the character → MP4 (`--start/--end` seconds, `--in-place`). `mocap` lists the clips; `scripts\update-mocap.ps1` fetches them |
@@ -50,6 +50,7 @@ lists every option.
 | `resolve SPEC --seed N` | Print a resolved spec as JSON (no Blender) |
 | `catalog` | Print what a spec can contain: slider ranges, hairstyles, outfit sets, garments (no Blender) |
 | `mocap` | List the motion-capture clips and whether they're downloaded (no Blender) |
+| `mmd` | List the imported MMD models in `imports/` by English name (no Blender); use one with `--mmd NAME` |
 | `check SPEC` | Strictly check a spec: unknown keys, out-of-range values, unknown asset names (no Blender) |
 | `render-test` | Smoke test of headless EEVEE |
 
@@ -59,6 +60,14 @@ character; without them it's the plain base), `--base`, `--pose NAME[,NAME]`, `-
 `--seat HEIGHT`, `--view-yaw DEG`, `--through-hair brow[,eyeline]`, `--no-post`. With a seed,
 the other options override what the spec chose, e.g.
 `uv run wogen clip --seed 5 --preset hop --hair hair_bob`.
+
+`--mmd NAME` uses an imported MMD model instead of the base (a name, `folder/name` or a
+.pmx path; `wogen mmd` lists them): poses, expressions, presets and mocap apply, with the
+model's own materials and no spring or soft-tissue physics yet. Spec, outfit and hair options
+don't apply. Personal use only, under the release terms (see [CLAUDE.md](CLAUDE.md)), e.g.
+`uv run wogen clip --mmd Yidhari --preset walk --expression smile_soft`. Imported models are
+renamed to English (bones, morphs, materials, objects; `wogen.mmd_names`), and `wogen mmd`
+and `--mmd` use English names; the originals are kept on the armature.
 
 ## Chat (Blender MCP)
 
@@ -87,17 +96,18 @@ Review helpers: `render.expression_sheet()`, `pose_sheet()`, `garment_sheet()`,
 ```
 blender/modules/wogen/   the package (importable by the CLI, headless Blender and MCP)
   *.py                   pure Python: specs, body params, catalog, poses, expressions, motions,
-                         hands, footlock, softtissue, bvh, garment naming, CLI
+                         hands, footlock, softtissue, drift, bvh, garment naming, CLI
   bl/*.py                Blender code: character, toon, overlay, face_shading, body, outfit,
-                         hair, garment_rig, face, pose, clearance, anim, mocap, physics,
-                         render, post, props, generate, export, jobs
+                         hair, garment_rig, tissue_rig, face, pose, clearance, anim, mocap,
+                         physics, render, post, props, generate, export, jobs
 blender/addons/          pinned MCP for Blender add-on (Blender script directory)
 assets/base/             VroidStudio VRM exports (base_f01 + outfit and hairstyle variants)
 assets/garments/         garment + hairstyle library (.blend) + index.json (signatures, sets, names, slots)
 assets/mocap/            manifest.json (pinned clip list) + cmu/*.bvh (fetched by the script)
 assets/poses/            user-saved poses (.toml), created on first save
 assets/LICENSES.md       asset provenance
-scripts/                 update-blender-mcp.ps1, update-mocap.ps1
+scripts/                 update-blender-mcp.ps1, update-mocap.ps1; tuning: tissue_measure.py,
+                         frame_strip.py
 specs/                   character specs (TOML)
 tests/                   pytest (pure + headless Blender)
 docs/                    documentation
@@ -116,12 +126,18 @@ references/              style references (copyrighted; gitignored)
 
 ## Documentation
 
+**Picking up work (people and agents):** read the balance table at the top of
+[docs/style-guide.md](docs/style-guide.md) (how far anything should go), then "Next steps" and
+the improvement backlog in [docs/roadmap.md](docs/roadmap.md) (what to do, where it starts,
+how big it is). For physics or motion changes, follow "Tune physics and review motion" in
+[docs/workflows.md](docs/workflows.md).
+
 | Doc | Contents |
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | How it works: pipeline, modules, data, key techniques |
-| [docs/workflows.md](docs/workflows.md) | How-tos: specs, garments, hairstyles, poses, clips, motion capture, exporting, tests |
+| [docs/workflows.md](docs/workflows.md) | How-tos: specs, garments, hairstyles, poses, clips, motion capture, tuning physics and reviewing motion, exporting, tests |
 | [docs/text-to-spec.md](docs/text-to-spec.md) | Describe a character in words → spec, in chat (vocabulary, process, rules) |
-| [docs/roadmap.md](docs/roadmap.md) | Status by phase, known issues, decisions, next steps |
-| [docs/tooling.md](docs/tooling.md) | Installed tools, versions, MCP and mocap pins, dev workflow |
-| [docs/style-guide.md](docs/style-guide.md) | Target look and how far each element is implemented |
+| [docs/roadmap.md](docs/roadmap.md) | Status by phase, known issues, decisions, next steps, improvement backlog (by area, with where each change starts) |
+| [docs/tooling.md](docs/tooling.md) | Installed tools, versions, MCP and mocap pins, unused capabilities of current tools, candidate tools, dev workflow |
+| [docs/style-guide.md](docs/style-guide.md) | Target look and feel: the stylized-versus-real balance, proportions, animation feel, secondary-motion targets, and how far each element is implemented |
 | [docs/implementation-options.md](docs/implementation-options.md) | Original option analysis, with the outcome of each |

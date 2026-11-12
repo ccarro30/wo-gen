@@ -11,6 +11,10 @@ out/
 # Third-party reference images (copyrighted; style reference only)
 references/
 
+# Third-party character models (copyrighted; personal reference only, never redistributed;
+# their own terms forbid redistribution and reusing parts on other models)
+imports/
+
 # Blender autosave/backup
 *.blend1
 *.blend2

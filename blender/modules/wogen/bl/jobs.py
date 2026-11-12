@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 import bpy
 
@@ -22,6 +23,10 @@ def _character_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--seed", type=int, default=None,
                    help="generate with this seed (implies --spec specs/default.toml)")
     p.add_argument("--base", default=None, help="base export (default: the spec's, or base_f01)")
+    p.add_argument("--mmd", default=None, metavar="MODEL",
+                   help="an imported MMD model instead of the base ('wogen mmd' lists them; "
+                        "a name, folder/name or .pmx path). Outfit, hair and spec options "
+                        "don't apply")
     p.add_argument("--expression", default="neutral")
     p.add_argument("--pose", default="idle",
                    help="library pose name, or comma-separated names merged left to right")
@@ -54,6 +59,26 @@ def _prepare(args: argparse.Namespace) -> None:
     character options (outfit, hair, tints, ...) then apply on top as overrides."""
     from . import character, face
     features = [f for f in args.through_hair.split(",") if f]
+    if args.mmd:
+        vroid_only = [flag for flag, used in (
+            ("--spec", args.spec), ("--seed", args.seed is not None), ("--base", args.base),
+            ("--outfit", args.outfit), ("--equip", args.equip), ("--unequip", args.unequip),
+            ("--tint", args.tint), ("--hair", args.hair)) if used]
+        if vroid_only:
+            raise SystemExit(f"--mmd: {', '.join(vroid_only)} only apply to the VRoid base")
+        from . import mmd_import
+        try:
+            arm = mmd_import.prepare(args.mmd)
+        except ValueError as e:              # unknown or ambiguous model name
+            raise SystemExit(f"--mmd: {e}") from None
+        from .. import mmd
+        source = Path(arm.get(mmd_import.SOURCE_KEY))
+        print(f"[mmd] {mmd.english_label(source, mmd_import.IMPORTS_DIR)} ({source})")
+        face.expression(args.expression)
+        if args.seat:
+            from . import props
+            props.seat(args.seat)
+        return
     if args.spec or args.seed is not None:
         from . import generate
         params = generate.generate(args.spec or "specs/default.toml", args.seed, base=args.base,
@@ -89,7 +114,7 @@ def _portrait(argv: list[str]) -> None:
     from . import render
     p = argparse.ArgumentParser(prog="portrait")
     _character_args(p)
-    p.add_argument("--framing", choices=["face", "bust", "full"], default="bust")
+    p.add_argument("--framing", choices=["face", "bust", "hips", "full"], default="bust")
     p.add_argument("--width", type=int, default=1600)
     p.add_argument("--height", type=int, default=2000)
     p.add_argument("--out", required=True)
@@ -103,7 +128,7 @@ def _turntable(argv: list[str]) -> None:
     from . import render
     p = argparse.ArgumentParser(prog="turntable")
     _character_args(p)
-    p.add_argument("--framing", choices=["face", "bust", "full"], default="full")
+    p.add_argument("--framing", choices=["face", "bust", "hips", "full"], default="full")
     p.add_argument("--frames", type=int, default=96)
     p.add_argument("--fps", type=int, default=24)
     p.add_argument("--width", type=int, default=1080)
@@ -122,7 +147,7 @@ def _clip(argv: list[str]) -> None:
     p.add_argument("--preset", default="look_around",
                    help=f"one of {', '.join(sorted(anim.PRESETS))}, or several joined by "
                         "commas (played in order with transitions)")
-    p.add_argument("--framing", choices=["face", "bust", "full"], default="bust")
+    p.add_argument("--framing", choices=["face", "bust", "hips", "full"], default="bust")
     p.add_argument("--fps", type=int, default=24)
     p.add_argument("--width", type=int, default=1080)
     p.add_argument("--height", type=int, default=1350)
@@ -157,6 +182,8 @@ def _clip(argv: list[str]) -> None:
     if not args.no_physics:
         print(physics.bake(physics.PhysicsSettings(substeps=opts.get("substeps", 1),
                                                    carry=opts.get("carry", 0.0))))
+    elif bpy.context.scene.rigidbody_world is not None:     # an MMD model's own physics
+        bpy.context.scene.rigidbody_world.enabled = False
     anim.loop_range(opts)
     render.clip(args.out, args.framing, (args.width, args.height), post=not args.no_post,
                 view_yaw=args.view_yaw, fps=args.fps, follow=opts.get("follow", False))
@@ -205,7 +232,7 @@ def _hair_sheet(argv: list[str]) -> None:
     p = argparse.ArgumentParser(prog="hair-sheet")
     p.add_argument("--base", default="base_f01")
     p.add_argument("--outfit", default=None, metavar="SET")
-    p.add_argument("--framing", choices=["face", "bust", "full"], default="bust")
+    p.add_argument("--framing", choices=["face", "bust", "hips", "full"], default="bust")
     p.add_argument("--out", required=True)
     args = p.parse_args(argv)
     character.prepare(args.base)
@@ -234,7 +261,7 @@ def _generate(argv: list[str]) -> None:
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--pose", default="idle")
     p.add_argument("--expression", default="smile_soft")
-    p.add_argument("--framing", choices=["face", "bust", "full"], default="full")
+    p.add_argument("--framing", choices=["face", "bust", "hips", "full"], default="full")
     p.add_argument("--view-yaw", type=float, default=25.0)
     p.add_argument("--width", type=int, default=1080)
     p.add_argument("--height", type=int, default=1350)
@@ -270,7 +297,7 @@ def _variants(argv: list[str]) -> None:
     p = argparse.ArgumentParser(prog="variants")
     p.add_argument("--spec", default="specs/default.toml")
     p.add_argument("--seeds", default="1-8")
-    p.add_argument("--framing", choices=["face", "bust", "full"], default="full")
+    p.add_argument("--framing", choices=["face", "bust", "hips", "full"], default="full")
     p.add_argument("--view-yaw", type=float, default=25.0)
     p.add_argument("--cols", type=int, default=4)
     p.add_argument("--cell", type=int, default=512)

@@ -17,6 +17,9 @@ waist = [0.92, 1.03]
 thigh = [0.94, 1.08]
 arm_thickness = [0.94, 1.05]
 bust = [0.85, 1.25]
+# Shape sliders, also multipliers (1.0 = the amount that suits hip_width and thigh; 0 = none):
+# seat, seat_round, seat_fold, hip_curve, thigh_upper, thigh_back, thigh_gap. Leave them at 1.0
+# so the shape stays in proportion to the size.
 
 [face]
 eye_size = [-0.4, 0.8]

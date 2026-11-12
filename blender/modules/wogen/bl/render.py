@@ -78,20 +78,30 @@ def setup_lights(scene: bpy.types.Scene, key_azimuth: float = 35.0, key_elevatio
 
 def portrait_camera(scene: bpy.types.Scene, armature: bpy.types.Object, framing: str = "bust",
                     focal_mm: float = 85.0, view_yaw: float = 0.0) -> bpy.types.Object:
-    """Camera aimed at the character. framing: 'face' | 'bust' | 'full'.
+    """Camera aimed at the character. framing: 'face' | 'bust' | 'hips' | 'full'.
 
     ``view_yaw`` orbits the camera (degrees; + moves it toward the character's left,
     e.g. 35 for a three-quarter view of her left side). Face/bust follow the posed head;
-    full fits the posed bounds of every visible character mesh (hair, skirts, legs) at the
-    current render aspect, so sitting/crouching poses stay in frame.
+    hips (waist to knees) follows the posed hips; full fits the posed bounds of every
+    visible character mesh (hair, skirts, legs) at the current render aspect, so
+    sitting/crouching poses stay in frame.
     """
     from mathutils import Matrix, Vector
-    head = armature.matrix_world @ armature.pose.bones["J_Bip_C_Head"].head
+
+    from .pose import humanoid_bone
+    head = armature.matrix_world @ armature.pose.bones[humanoid_bone(armature, "head")].head
     height = head.z + 0.15
     frames = {   # (look-at point, vertical extent to fit in metres)
         "face": (head + Vector((0, 0, 0.07)), 0.34),
         "bust": (head + Vector((0, 0, -0.06)), 0.66),
     }
+    # Hips framing centres on the hip joints (the hips bone's height varies by rig: VRoid's
+    # sits 3.6 cm above the leg joints, MMD's waist 5-7 cm); -0.064 m keeps the VRoid frame.
+    legs = [armature.pose.bones.get(humanoid_bone(armature, f"{s}_upper_leg", ""))
+            for s in ("left", "right")]
+    if all(b is not None for b in legs):
+        joints = sum((b.head for b in legs), Vector()) / 2
+        frames["hips"] = (armature.matrix_world @ joints + Vector((0, 0, -0.064)), 0.80)
     if framing == "full":
         frames["full"] = _fit_full(scene, armature, view_yaw) or             (Vector((head.x, head.y, height / 2)), height * 1.1)
     target, extent = frames[framing]
@@ -210,7 +220,8 @@ def turntable(frames: int = 96, framing: str = "full", resolution: tuple[int, in
     scene = bpy.context.scene
     portrait(framing, resolution=resolution, post=post, pose=pose)
     arm = character_armature()
-    head = arm.matrix_world @ arm.pose.bones["J_Bip_C_Head"].head
+    from .pose import humanoid_bone
+    head = arm.matrix_world @ arm.pose.bones[humanoid_bone(arm, "head")].head
     pivot = bpy.data.objects.get("wg_turntable")
     if pivot is None:
         pivot = bpy.data.objects.new("wg_turntable", None)
@@ -279,8 +290,11 @@ def follow_camera(scene: bpy.types.Scene) -> None:
     cam.parent = pivot
     cam.matrix_parent_inverse = pivot.matrix_world.inverted()
 
+    from .pose import humanoid_bone
+    hips_bone = humanoid_bone(arm, "hips")
+
     def hips_xy():
-        h = arm.matrix_world @ arm.pose.bones["J_Bip_C_Hips"].head
+        h = arm.matrix_world @ arm.pose.bones[hips_bone].head
         return h.x, h.y
     current = scene.frame_current
     x0, y0 = hips_xy()                     # relative to the frame the camera was framed on

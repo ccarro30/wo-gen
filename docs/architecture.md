@@ -47,7 +47,10 @@ Pure modules (no `bpy`, unit-tested):
 | `poses` | Pose format, mirroring, hand shapes, IK entries, library, TOML save/load |
 | `hands` | Procedural finger animation (open / relaxed / loose fist from the motion) |
 | `footlock` | Foot-contact detection and lock offsets for retargeted motion |
-| `softtissue` | Damped-spring soft-tissue (bust) response to the chest's acceleration |
+| `softtissue` | Damped-spring soft-tissue response (bust, butt, thighs, belly) to the body's acceleration; lower-body regions and their falloff |
+| `drift` | Slow seeded idle drift (a breeze) for spring chains |
+| `mmd_names` | English names for imported models: term dictionaries (MMD Japanese, modelers' Chinese) for bones, materials and objects; whole-name morph meanings; PMX header reader (names, release terms) |
+| `mmd` | MMD (PMX) skeleton → VRM humanoid mapping, D-bone follow map, Fcl expression keys → standard MMD morphs (`FCL_MORPHS`), model discovery and lookup under `imports/` |
 | `bvh` | BVH parser, mocap clip catalog (`assets/mocap/manifest.json`), CMU → humanoid bone map |
 | `motions` | Motion presets and generators (turn, hop, spin, sway, walk, run, loops), chains, per-preset clip options |
 | `expressions` | Expression presets over VroidStudio `Fcl_*` face keys |
@@ -64,15 +67,18 @@ Blender modules (`wogen.bl`):
 | `overlay` | Brows (and optional lash lines) drawn through the bangs |
 | `face_shading` | Anime face shadows: ellipsoid normals on the face skin, rotated with the head |
 | `body` | Rest-pose retargeting for body params; garment/rig fitting; procedural face keys |
+| `shape` | Hip, seat and thigh shape: displacement fields on the fitted rest mesh; garments follow the skin |
 | `outfit` | Split Body into garments, hidden-skin mask, recolor/layers, library save/equip, harvest, sets, names |
 | `hair` | Hairstyle modules: build from an export's hair, harvest, strip the base hair, equip |
 | `garment_rig` | Secondary bones + spring chains + colliders carried by garments |
+| `tissue_rig` | Soft-tissue helper bones (butt, thighs, belly) and their weights on body and garments |
+| `mmd_import` | Imported MMD characters: PMX import via mmd_tools, humanoid map on the armature (`wg_humanoid`, read by `pose.humanoid_map`; `pose.humanoid_bone` for single bones), leg IK and waist-cancel muted, A-pose rest baked to the T-pose from the evaluated rig, grounded, shoe sole points measured (`wg_soles`), `prepare(name)` for `--mmd` (with the model's own rigid-body physics: `build_physics`, baked by `simulate` with a lead-in from rest; `release_bust` hands the bust bones to `physics._Tissue`); names translated to English last (`translate_names`; originals in `wg_original_names`, read by `face`) |
 | `face` | Expressions and gaze |
 | `pose` | Applying poses (FK + analytic two-bone IK), saving poses, grounding (with shoe lift), thumb solver |
 | `clearance` | Moves forearms/hands out of skirts and dresses after posing |
 | `anim` | Keys sequences and chains (incl. mocap segments), per-frame foot planting, stepping transitions, loops |
 | `mocap` | BVH retargeting, floor pass, foot locking, procedural fingers, per-frame skirt clearance |
-| `physics` | VRM SpringBone 1.0 solver baked to keyframes (character + garment chains, limb colliders, carry), soft-tissue bust bake; skirt settle for stills |
+| `physics` | VRM SpringBone 1.0 solver baked to keyframes (character + garment chains, limb colliders, carry), soft-tissue bake (bust and lower body), idle drift, hair root-to-tip taper; settle (skirts, hair, bust) for stills |
 | `render` | Portrait camera/lights/world, turntable, clips, contact sheets |
 | `post` | Compositor: bloom, chromatic aberration, grade, vignette |
 | `props` | Simple props (seat) with a flat-color outline (`toon.add_flat_outline`) |
@@ -94,6 +100,22 @@ Blender modules (`wogen.bl`):
      uniformly and are inherited by children, so hair follows the head.
    - The transforms are stored on the armature (`wg_body_transforms`), so garments equipped
      later fit the same body.
+   - **Shape** (`bl/shape.py`): after the size transforms, smooth displacement fields
+     placed relative to the fitted hip and thigh bones, masked by the skin weights, change
+     the profile: seat projection and roundness, the crease under the seat, side-hip curve,
+     upper-thigh fullness, the back of the thigh and the inner-thigh gap. Amounts come from
+     `body.shape_amounts`: each shape slider (1.0 = as tuned) times how far its size slider
+     (`hip_width` or `thigh`) is from its minimum toward the curvy body they were tuned on.
+     The body's offsets are kept as the point attribute `wg_shape_offset`; a garment fitted
+     later copies the offset of the nearest skin (full within 4 cm, none past 10 cm), so
+     cloth follows the skin. Hair is not shaped.
+   - **Smoothing** (`toon.add_smoothing`, on `Body` only): after the armature, a Weld
+     (1e-5 m) re-joins the vertices the VRM export splits along UV seams (2,094 open edges on
+     the body; without it subdivision opens cracks along every seam), then one level of
+     Subdivision Surface, then the outline hull, so the outline follows the smooth surface.
+     Render only (export strips it). Headless runs keep it off in the viewport (`levels` 0,
+     Weld hidden there) because every frame change of a bake evaluates the viewport;
+     final renders use `render_levels`. Garments, hair and the face aren't smoothed.
 4. **Face shading** (`bl/face_shading.py`): the face skin shades with the normals of an
    ellipsoid fitted to the face, leaned toward the face's forward direction, so the shadow
    sweeps in cleanly from the side instead of breaking up on the nose and lips.
@@ -160,10 +182,12 @@ Generated characters carry `wg_generated` (resolved spec + params) on the armatu
     exits the cloth = inside; or within 2 cm). Free arms rotate out about the shoulder in 2°
     steps (≤ 30°); IK hands move their target outward and re-solve (≤ 12 cm). Cloth weighted
     to the arm bones (cuffs, armholes) is ignored, and passes repeat until nothing moves.
-  - **Skirt settle** (`physics.settle`, unkeyed poses only): replays the move from the
-    standing rest pose into the pose over ~32 steps while garment spring chains simulate
-    against full-length thigh/shin colliders (slack measured standing), so a rising thigh
-    lifts the skirt. Runs before clearance, so arms clear the draped skirt. Clips bake instead.
+  - **Settle** (`physics.settle`, unkeyed poses only): replays the move from the
+    standing rest pose into the pose over ~32 steps while garment and hair spring chains
+    simulate against full-length thigh/shin colliders (slack measured standing), so a
+    rising thigh lifts the skirt and hair hangs from a bowed head. The bust then takes the
+    soft-tissue solver's rest offset for the posture (one frame, no motion). Runs before
+    clearance, so arms clear the draped skirt. Clips bake instead.
   - **Hand shapes**: finger curls, plus solved thumbs (relaxed, peace, fist, point).
     `pose.solve_thumb(curls, over=[fingers])` searches thumb angles by forward kinematics so
     the tip rests on the curled fingers; use it for new hand shapes instead of guessing.
@@ -208,23 +232,62 @@ Generated characters carry `wg_generated` (resolved spec + params) on the armatu
     chains are left out of the spring solve. Instead each side's anchor (where the upper
     chest carries `Bust2`'s head) is sampled per frame. Its acceleration, rotated into the
     chest's rest frame, drives three damped oscillators (lateral/depth/vertical; about
-    2.2 Hz vertical, damping ratio 0.2, mostly vertical gain). Posture also shifts the rest
+    2.3 Hz vertical, damping ratio 0.23, mostly vertical gain). Posture also shifts the rest
     sag (gravity in the chest frame, weighted 0.4). The offset is soft-clamped (tanh) at the
     chain's tip. It is applied to `Bust1` alone: VroidStudio weights the breast only partly
     to it (0.83 at the centre, falling off toward the chest) and barely to `Bust2`. So 60 %
     of the offset becomes a translation, which shifts the whole weighted area as one mass,
     and the rest a swing about its base. Drops are scaled to 70 %, because a full drop
     creases the underside. Gains are set so a walk moves about 1 cm at the tip while hops and
-    jumps reach the clamp. Bigger busts get more gain, a lower frequency and less damping
-    (bouncier); smaller ones the reverse (firmer). Export writes `BUST_SPRING_PARAMS` (drag 0.15) into
-    the VRM bust chains as an approximation, and `soft_tissue=False` bakes with them too.
+    jumps reach the clamp. Bigger busts get more gain and a lower frequency (more movement)
+    but also more damping, so they still settle promptly; smaller ones are firmer. Export
+    writes `BUST_SPRING_PARAMS` (drag 0.15) into the VRM bust chains as an approximation,
+    and `soft_tissue=False` bakes with them too. Export scales the stiffness with the bust
+    slider (`physics.bust_spring_params`: a VRM spring's stiffness acts like frequency
+    squared, so `for_size`'s frequency × s^-0.3 becomes stiffness × s^-0.6; drag, which
+    acts like damping ratio × frequency, stays).
+    Three inputs keep big motions from looking snappy. `drive_limit` (22 m/s²) soft-clamps
+    the driving acceleration. `drive_window` sets the time span acceleration is measured
+    over (one 24 fps frame, fixed in seconds, so other frame rates drive the tissue the
+    same). `limit_damping` (1.5) adds damping that rises with the square of how far the
+    offset is past half the limit (`LIMIT_KNEE`): tissue pressed into its limit loses
+    energy, so a run stepping near the bust's own frequency can't wind the swing up past
+    the clamp and whip the tip through the middle of each swing. The limit is 62 mm.
+  - **Lower body** (`lower_body`, default on; `bl/tissue_rig.py`): VroidStudio has no bones
+    for the butt, thighs or belly, so the first bake adds helper bones
+    (`wg_tissue.<region>.<L|R|C>.<parent>`), one per region, side and source bone
+    (`softtissue.REGIONS`). Each takes a share of its parent's skin weights by a smooth
+    ellipsoid falloff (evaluated in the base model's rest space, so regions cover the same
+    skin at any proportions), on the body and on every garment, so clothes move with the
+    skin under them. A helper only takes weight from its own parent, so the mesh deforms
+    exactly as before until the helper moves. The same solver shifts each helper (location
+    keys only) from its anchor's acceleration, with firmer, much smaller parameters than the
+    bust (3 to 4 Hz, damping 0.3 to 0.35, limits of 8 to 18 mm on the helper, and the skin
+    moves about half of that). `drive_limit` soft-clamps acceleration spikes (keyframed
+    runs reach 5 g for a frame). Gain scales with `hip_width`/`thigh` (butt), `thigh`
+    (thighs) and `waist` (belly): slim bodies move less and quicker. The butt region also
+    covers the side of the hip. Exported VRMs keep the helper bones static for now.
+    `limit_damping` is off on the regions (approved that way).
+  - **Left/right variation** (`PhysicsSettings.tissue_variation`, `softtissue.vary`): the
+    two sides of each pair draw the same seeded numbers (the character's seed) and move in
+    opposite directions: frequency 3 to 6 % apart, damping 6 to 12 %, gain 4 to 8 %, limit 3
+    to 6 %, and one side feels the motion 20 to 40 ms late (`drive_delay`). Timing is what
+    survives the clamp on big moves; without it both sides move as mirror images.
+  - **Idle drift** (`PhysicsSettings.drift`, pure `drift.py`): every spring step adds
+    `strength × drift(t)` like extra gravity, a sum of slow seeded sines (0.13 to 0.6 Hz,
+    mostly sideways). Hair gets the full strength (0.05), other chains `drift_cloth` (0.3) of
+    it. Hair tips sway about 1 cm at idle, skirt hems about 4 mm.
+  - **Hair taper** (`PhysicsSettings.hair_taper`): hair chains' stiffness is scaled from
+    1.5× at the root to 0.7× at the tip, in bakes and settle. Hair chains are those with
+    `J_Sec_Hair` bones (base hair and harvested hairstyles alike).
 - **Mocap** (`bvh.py` pure parser + catalog; `bl/mocap.py`): CMU BVH frame 0 is a T-pose, as
   is our rest. Per mapped joint the motion is the world rotation relative to that frame,
   converted from BVH axes (Y up, facing +Z) to ours and applied over the bone's rest:
   `basis = rest⁻¹ · D_parent⁻¹ · D · rest`. Hips travel is scaled by hip-height ratio, the
   clip is turned to face the camera (travelling clips: to walk toward it), a floor pass drops
   it so contacts land on the floor (5th percentile of the lowest sole point: heel or toe tip,
-  carried by the foot/toes bones), then:
+  carried by the foot/toes bones; `footlock.floor_trend` also removes a capture floor's
+  slope, fitted through each second's low contact, when it clearly explains them), then:
   - **Foot locking** (`footlock.py` pure, `mocap.lock_feet`): per foot, the pivot is the lower
     sole point; touching the floor (or low and nearly still) = planted. A horizontal
     correction holds the pivot where it landed, carries over heel→toe rolls and eases out
@@ -242,9 +305,9 @@ Generated characters carry `wg_generated` (resolved spec + params) on the armatu
 
 EEVEE only for the toon look (`Shader to RGB`); Standard view transform; key sun without cast
 shadows (clean anime faces) plus a cool rim sun; a world that shows the background only to
-camera rays. `render.portrait` frames face/bust from the posed head; full fits the posed
-bounds of every visible character mesh at the render aspect (sitting/crouching stay in
-frame); optional yaw.
+camera rays. `render.portrait` frames face/bust from the posed head and hips from the posed hips; full
+fits the posed bounds of every visible character mesh at the render aspect
+(sitting/crouching stay in frame); optional yaw.
 Turntables orbit the camera on a frame-driven pivot; clips render the scene's animation to
 H.264 MP4. The compositor group (`post.py`) adds bloom, chromatic aberration, grade and vignette.
 
@@ -270,14 +333,14 @@ reproducible runs headless. Exploration code worth keeping moves into the packag
 
 ## Conventions
 
-- **Custom properties.** Armature: `wg_body_params`, `wg_body_transforms`, `wg_generated`.
+- **Custom properties.** Armature: `wg_body_params`, `wg_body_transforms`, `wg_generated`, `wg_tissue`.
   Garment objects: `wg_garment`, `wg_slot`, `wg_item`, `wg_lift`, `wg_rig`, `wg_recolor`.
   Face object: `wg_through_hair_params`; Face mesh: `wg_face_normals` (normals baked),
   `wg_eye_size_applied`, attributes `wg_face_normal`/`wg_face_normal_w`. Materials:
   `wg_source` (twin → MToon source).
 - **Names.** `wg_*` cel twins, `wgo_*` outlines, `wgx_*` overlay materials. `Garment_<name>`
   objects. Helpers: `wg_head_frame` (empty on the head bone), `wg_cam`, `wg_key`/`wg_rim`
-  lights, `wg_follow` (follow-camera pivot), modifiers `wg_outline`, `wg_through_hair`,
+  lights, `wg_follow` (follow-camera pivot), modifiers `wg_outline`, `wg_weld`, `wg_subsurf`, `wg_through_hair`,
   `wg_face_normals`. Blender's `.NNN` duplicate suffixes are stripped when parsing names.
 - **Paths.** Temporary files only go under `.cache/tmp` (never the system temp); outputs go
   under `out/`.

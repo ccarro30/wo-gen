@@ -16,6 +16,7 @@ Chat usage::
 
 from __future__ import annotations
 
+import json
 import math
 
 import bpy
@@ -27,6 +28,7 @@ from .. import bvh, footlock
 AXES = Matrix(((1.0, 0.0, 0.0), (0.0, 0.0, -1.0), (0.0, 1.0, 0.0)))
 AXES_INV = AXES.transposed()
 TRAVEL_ALIGN = 0.8        # m: clips travelling further than this are turned to walk at the camera
+ANTIALIAS = 0.45          # Gaussian sigma per output-frame step when downsampling the capture
 
 
 def _local_rotation(channels: dict[str, float]) -> Matrix:
@@ -83,8 +85,40 @@ def retarget(motion: bvh.Motion, frames: list[int], armature=None, start: int = 
              max(_root_position(motion, rest_frame).y, 1e-6))
     lift = shoe_lift()
 
+    # Anti-aliasing: an output frame spans several source frames (120 fps captures at 24 fps);
+    # taking the nearest one lets the capture's high-frequency noise through as shake. Each
+    # output frame averages the source frames around it (Gaussian, ANTIALIAS x the step).
+    from .. import smooth
+    step = (frames[-1] - frames[0]) / max(len(frames) - 1, 1) if len(frames) > 1 else 1.0
+    weights = smooth.gaussian(ANTIALIAS * step) if ANTIALIAS * step > 0.5 else [1.0]
+    reach = len(weights) // 2
+    last = len(motion.frames) - 1
+    world_cache: dict[int, list[Matrix]] = {}
+
+    def window(frame: int) -> list[int]:
+        return [min(last, max(1, frame + k - reach)) for k in range(len(weights))]
+
+    def world_at(frame: int) -> list[Matrix]:
+        if frame not in world_cache:
+            world_cache[frame] = _world_rotations(motion, frame)
+        return world_cache[frame]
+
+    def filtered_world(frame: int) -> dict[int, Matrix]:
+        if reach == 0:
+            return {i: world_at(frame)[i] for i in driven.values()}
+        worlds = [world_at(f) for f in window(frame)]
+        return {i: Quaternion(smooth.average_quaternions(
+                    [tuple(w[i].to_quaternion()) for w in worlds], weights)).to_matrix()
+                for i in set(driven.values())}
+
+    def root_at(frame: int) -> Vector:
+        if reach == 0:
+            return _root_position(motion, frame)
+        return sum((_root_position(motion, f) * w for f, w in zip(window(frame), weights)),
+                   Vector())
+
     def deltas(frame: int, align: Matrix) -> dict[str, Matrix]:
-        world = _world_rotations(motion, frame)
+        world = filtered_world(frame)
         return {bone: align @ AXES @ (world[i] @ t_inv[i]) @ AXES_INV for bone, i in driven.items()}
 
     align = Matrix.Identity(3)
@@ -104,14 +138,19 @@ def retarget(motion: bvh.Motion, frames: list[int], armature=None, start: int = 
     for pb in arm.pose.bones:
         pb.rotation_mode = "QUATERNION"
     previous: dict[str, Quaternion] = {}
+    tracks: dict[str, list[Quaternion]] = {}
     moves: list[Vector] = []
     frame_out = start
+    follow = json.loads(arm[FOLLOW_KEY]) if FOLLOW_KEY in arm else {}
     for src in frames:
         d = deltas(src, align)
         world: dict[str, Matrix] = {}
         for bone in order:
             parent = bone.parent.name if bone.parent and bone.parent.name in world else None
-            world[bone.name] = d.get(bone.name, world[parent] if parent else Matrix.Identity(3))
+            inherited = d.get(follow.get(bone.name)) if bone.name in follow else None
+            if inherited is None:
+                inherited = world[parent] if parent else Matrix.Identity(3)
+            world[bone.name] = d.get(bone.name, inherited)
             if bone.name not in d:
                 continue
             parent_delta = world[parent] if parent else Matrix.Identity(3)
@@ -120,11 +159,9 @@ def retarget(motion: bvh.Motion, frames: list[int], armature=None, start: int = 
             if bone.name in previous and previous[bone.name].dot(q) < 0:
                 q.negate()
             previous[bone.name] = q
-            pb = arm.pose.bones[bone.name]
-            pb.rotation_quaternion = q
-            pb.keyframe_insert("rotation_quaternion", frame=frame_out)
+            tracks.setdefault(bone.name, []).append(q)
         # Hips travel: scaled, relative to the first frame horizontally and the T-pose height.
-        p = AXES @ _root_position(motion, src)
+        p = AXES @ root_at(src)
         move = align @ Vector((p.x - origin.x, p.y - origin.y, 0.0)) * scale
         if in_place:
             move.x = move.y = 0.0
@@ -133,15 +170,36 @@ def retarget(motion: bvh.Motion, frames: list[int], armature=None, start: int = 
         move.z = (p.z - rest_height) * scale + lift
         moves.append(move)
         frame_out += 1
+    _key_rotations(arm, hmap, tracks, start)
     _key_hips(arm, hips_bone, rest[hips_bone], moves, start)
-    drop = _floor_offset(arm, hmap, start, frame_out - 1, lift)
-    for m in moves:
+    drops = _floor_offset(arm, hmap, start, frame_out - 1, lift)
+    for m, drop in zip(moves, drops):
         m.z -= drop
     _key_hips(arm, hips_bone, rest[hips_bone], moves, start)
     return frame_out - 1
 
 
-FLOOR_PERCENTILE = 0.05     # share of frames whose lowest foot may dip slightly below the floor
+# Gaussian sigma (frames at the clip's rate) per humanoid part: captured feet and toes
+# flicker 15-30 degrees frame to frame (marker noise), which reads as the foot snapping.
+SMOOTH_SIGMA = {"foot": 1.5, "toes": 2.5, "hand": 1.0}   # end bones only: smoothing the
+                                            # legs too desyncs them from the hips' path
+                                            # (ankle jumps tripled)
+
+
+def _key_rotations(arm, hmap, tracks: dict[str, list[Quaternion]], start: int) -> None:
+    """Key each driven bone's rotation track from ``start``, smoothing the noisy ones."""
+    from .. import smooth
+    sigma_of = {hmap[f"{side}_{part}"]: sigma for part, sigma in SMOOTH_SIGMA.items()
+                for side in ("left", "right") if f"{side}_{part}" in hmap}
+    for name, track in tracks.items():
+        sigma = sigma_of.get(name, 0.0)
+        if sigma:
+            track = [Quaternion(q) for q in
+                     smooth.smooth_quaternions([tuple(q) for q in track], sigma)]
+        pb = arm.pose.bones[name]
+        for i, q in enumerate(track):
+            pb.rotation_quaternion = q
+            pb.keyframe_insert("rotation_quaternion", frame=start + i)
 
 
 def _key_hips(arm, bone: str, rest: Matrix, moves: list[Vector], start: int) -> None:
@@ -156,29 +214,41 @@ HEEL_BACK = 0.02          # m: the heel's sole point sits this far behind the an
 TOE_AHEAD = 0.04          # m: the toe tip sits this far ahead of the ball (toes joint)
 
 
+SOLES_KEY = "wg_soles"    # armature prop: measured {side: {heel, toe: [x, y, z]}} (MMD imports)
+FOLLOW_KEY = "wg_follow"  # armature prop: {bone: bone whose rotation it copies} (MMD D-bones)
+
+
 def _sole_locals(arm, hmap, side: str) -> dict[str, tuple[str, Vector]]:
     """Heel and toe-tip points on the sole, as (bone, bone-local offset). At rest the sole is
-    on the floor (z = 0); posed, ``pb.matrix @ offset`` follows the foot's roll."""
+    on the floor (z = 0); posed, ``pb.matrix @ offset`` follows the foot's roll. Imported
+    models carry points measured from their shoes (``SOLES_KEY``); the VRoid base uses
+    fixed offsets from the ankle and toe joints."""
+    stored = json.loads(arm[SOLES_KEY]).get(side) if SOLES_KEY in arm else None
     out = {}
     for key, name, dy in (("heel", "foot", HEEL_BACK), ("toe", "toes", -TOE_AHEAD)):
         bone = arm.data.bones[hmap[f"{side}_{name}"]]
-        point = Vector((bone.head_local.x, bone.head_local.y + dy, 0.0))
+        if stored:
+            point = Vector(stored[key])
+        else:
+            point = Vector((bone.head_local.x, bone.head_local.y + dy, 0.0))
         out[key] = (bone.name, bone.matrix_local.inverted() @ point)
     return out
 
 
-def _floor_offset(arm, hmap, start: int, end: int, lift: float) -> float:
-    """How far the clip floats: the low percentile of the per-frame lowest sole point (heels
-    and toe tips) above the floor. Contacts land on the floor; real airborne moments stay up."""
+def _floor_offset(arm, hmap, start: int, end: int, lift: float) -> list[float]:
+    """Per frame, how far the clip floats: the capture floor under the per-frame lowest sole
+    point (heels and toe tips), fitted as a trend (``footlock.floor_trend``; capture floors
+    can slope). Contacts land on the floor; real airborne moments stay up."""
     soles = [p for side in ("left", "right") for p in _sole_locals(arm, hmap, side).values()]
+    rest_low = min((arm.data.bones[b].matrix_local @ off).z for b, off in soles)
     scene = bpy.context.scene
     lows = []
     for f in range(start, end + 1):
         scene.frame_set(f)
         lows.append(min((arm.pose.bones[b].matrix @ off).z for b, off in soles))
-    lows.sort()
-    low = lows[min(len(lows) - 1, int(len(lows) * FLOOR_PERCENTILE))]
-    return low - lift                    # soles rest at z = 0, raised by the shoes' lift
+    fps = scene.render.fps / scene.render.fps_base
+    # Soles rest at rest_low (0 for the VRoid base), raised by the shoes' lift.
+    return [z - lift - rest_low for z in footlock.floor_trend(lows, fps)]
 
 
 def _foot_samples(arm, hmap, side: str, start: int, end: int) -> list[dict]:
@@ -275,7 +345,8 @@ def animate_fingers(start: int, end: int, armature=None) -> dict[str, float]:
     scene = bpy.context.scene
     fps = scene.render.fps / scene.render.fps_base
     pb = arm.pose.bones
-    chest, head, hips = (pb[hmap[n]] for n in ("upper_chest", "head", "hips"))
+    chest = pb[next(hmap[n] for n in ("upper_chest", "chest", "spine") if n in hmap)]
+    head, hips = pb[hmap["head"]], pb[hmap["hips"]]
     samples = {"left": [], "right": []}
     body = []
     for f in range(start, end + 1):

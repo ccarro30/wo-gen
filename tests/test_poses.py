@@ -105,3 +105,20 @@ def test_folded_thumb_shapes_use_solved_thumbs():
         assert "thumb" in P.HANDS[shape] and "thumb" not in P.HANDS[shape]["curls"]
     peace = P.hand_shape("peace", "right")
     assert peace["right_thumb_proximal"] == P.mirror_euler(P.HANDS["peace"]["thumb"][1])
+
+
+def test_swing_turns_a_lowered_arm_forward_on_both_sides():
+    def direction(e, side):           # where the T-pose arm (left +X, right -X) points
+        m = P._matrix(e)
+        return [side * m[i][0] for i in range(3)]
+
+    for e, side in (((0, 72, -6), 1), (P.mirror_euler((0, 72, -6)), -1)):
+        before, after = direction(e, side), direction(P.swing(e, -20), side)
+        assert before[2] < -0.9                # hanging down
+        assert after[1] < before[1] - 0.3     # swung toward -Y, her front
+        assert after[0] == pytest.approx(before[0], abs=1e-9)   # no sideways change
+
+
+def test_swing_round_trips_euler():
+    for e in ((10, 20, 30), (0, 72, -6), (-35, -60, 12)):
+        assert P.swing(e, 0.0) == pytest.approx(e, abs=1e-9)

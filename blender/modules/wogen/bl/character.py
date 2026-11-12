@@ -131,8 +131,10 @@ def remove_character() -> None:
 
 
 def character_meshes() -> list[bpy.types.Object]:
+    """The character's visible meshes (an imported MMD model's rigid-body shapes excluded)."""
     coll = bpy.data.collections.get(CHARACTER_COLLECTION)
-    return [o for o in coll.all_objects if o.type == "MESH"] if coll else []
+    return [o for o in coll.all_objects if o.type == "MESH"
+            and getattr(o, "mmd_type", "NONE") in ("NONE", "")] if coll else []
 
 
 def character_armature() -> bpy.types.Object | None:

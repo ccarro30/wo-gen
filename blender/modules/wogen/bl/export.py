@@ -169,14 +169,18 @@ def _bake_material_recolors(meshes) -> int:
 
 
 def _tune_bust_springs(arm: bpy.types.Object) -> int:
-    """Give the VRM bust chains the parameters that approximate the soft-tissue bounce."""
-    from .physics import BUST_SPRING, BUST_SPRING_PARAMS
+    """Give the VRM bust chains the parameters that approximate the soft-tissue bounce, for
+    this character's bust size (``physics.bust_spring_params``)."""
+    import json
+    from .body import PARAMS_KEY
+    from .physics import BUST_SPRING, bust_spring_params
+    params = bust_spring_params(json.loads(arm.get(PARAMS_KEY, "{}")).get("bust", 1.0))
     tuned = 0
     for sp in arm.data.vrm_addon_extension.spring_bone1.springs:
         if sp.vrm_name != BUST_SPRING:
             continue
         for j in sp.joints[:-1]:            # the last joint is the chain's end
-            for key, value in BUST_SPRING_PARAMS.items():
+            for key, value in params.items():
                 setattr(j, key, value)
             tuned += 1
     return tuned
