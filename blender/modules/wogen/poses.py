@@ -21,6 +21,11 @@ left_lower_leg         X+ bends the knee (foot goes back)
 
 ``hips_location`` (metres, armature axes) shifts the whole body, e.g. to sit or crouch.
 
+``upright: (f, 0, 0)`` leans the spine sideways after the rotations so the neck sits at
+``f`` times the pelvis's sideways shift (``hips_location`` X): 0 keeps the shoulders on the
+midline while the hips sway, 1 lets them travel with the hips. Applied per rig, since how
+far a pelvis tilt carries the torso depends on where its pivot sits.
+
 IK entries place a hand or foot (two-bone limb chain) at a point relative to an anchor::
 
     "ik:left_hand": {"target": "left_upper_leg", "offset": (0.08, 0.0, 0.07),
@@ -51,6 +56,7 @@ Pose = dict[str, Union[Euler, dict]]
 PoseSpec = Union[str, Pose, list]
 
 HIPS_LOCATION = "hips_location"
+UPRIGHT = "upright"
 IK_PREFIX = "ik:"
 REST_PREFIX = "rest:"
 IK_CHAINS = {f"{side}_{end}" for side in ("left", "right") for end in ("hand", "foot")}

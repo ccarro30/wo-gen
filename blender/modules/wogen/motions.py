@@ -8,8 +8,8 @@ hops, spins, sways, a walk). ``PRESET_OPTIONS`` holds the clip settings a preset
 from __future__ import annotations
 
 from .paths import ASSETS_DIR
-from .poses import (HIPS_LOCATION, IK_PREFIX, REST_PREFIX, both, merge, plant, resolve_pose,
-                    swing)
+from .poses import (HIPS_LOCATION, IK_PREFIX, REST_PREFIX, UPRIGHT, both, merge, plant,
+                    resolve_pose, swing)
 
 POSES_DIR = ASSETS_DIR / "poses"
 
@@ -67,6 +67,11 @@ WALK_ARMS = ((22.0, 18.0), (18.0, 0.0))
 # stance foot (m) and drop toward the swing leg (deg), feet placed this far in toward the
 # midline (m; a narrower track makes the hips sway more, a slightly feminine walk).
 WALK_STRIDE, WALK_SHIFT, WALK_DROP, WALK_NARROW = 0.55, 0.032, 6.0, 0.03
+# How far the shoulders follow the pelvis sideways (``upright``): the hips sway under a
+# steadier upper body.
+UPRIGHT_SHARE = 0.3
+# Run: runners sway less (the body is in flight half the time) and land nearer the midline.
+RUN_SHIFT, RUN_DROP, RUN_NARROW = 0.015, 4.0, 0.02
 RUN_ARMS = ((26.0, 20.0), (10.0, -10.0))
 
 
@@ -99,7 +104,8 @@ def _gait(steps: int, stride: float, frames_per_step: int, start: int, expressio
     # The body drops at contact by about what the spread legs lose in height (leg ~0.8 m).
     high, low = 0.004, -0.008 - stride ** 2 / 8.0
     lift = 0.05 if run else 0.075
-    narrow = {"left": 0.0, "right": 0.0} if run else {"left": -WALK_NARROW, "right": WALK_NARROW}
+    n = RUN_NARROW if run else WALK_NARROW
+    narrow = {"left": -n, "right": n}
     feet = {"left": 0.0, "right": 0.0}            # forward distance of each foot (metres)
     keys = [(start, merge(base, plant("left"), plant("right")), expression)]
     frame = start + 6 + frames_per_step // 2
@@ -110,7 +116,8 @@ def _gait(steps: int, stride: float, frames_per_step: int, start: int, expressio
         target = feet[stance] + (stride if i else stride / 2)
         mid = (feet[swing] + target) / 2
         if run:
-            keys += _run_step(base, feet, stance, swing, target, sign, frame, frames_per_step)
+            keys += _run_step(base, feet, stance, swing, target, sign, frame, frames_per_step,
+                              narrow)
             feet[swing] = target
             frame += frames_per_step
             continue
@@ -123,13 +130,15 @@ def _gait(steps: int, stride: float, frames_per_step: int, start: int, expressio
         passing = merge(base, {
             "hips_location": (WALK_SHIFT * sign, -(feet[stance] + mid) / 2, high),
             "hips": (0, 2 - WALK_DROP * sign, 3 * sign),
-            "spine": (2, -1 + WALK_DROP * sign, -3 * sign), "chest": (1, 0, -2 * sign)},
+            "spine": (2, -1 + WALK_DROP * sign, -3 * sign), "chest": (1, 0, -2 * sign),
+            UPRIGHT: (UPRIGHT_SHARE, 0, 0)},
             plant(stance, (narrow[stance], -feet[stance], 0.0)),
             plant(swing, (narrow[swing] / 2, -mid, lift), orient=(5, 0, 0)))
         feet[swing] = target
         contact = merge(base, _arm_swing(base, sign, WALK_ARMS), {
             "hips_location": (0.0, -(feet["left"] + feet["right"]) / 2, low),
-            "hips": (0, 2, 8 * sign), "spine": (2, -1, -8 * sign), "chest": (1, 0, -3 * sign)},
+            "hips": (0, 2, 8 * sign), "spine": (2, -1, -8 * sign), "chest": (1, 0, -3 * sign),
+            UPRIGHT: (UPRIGHT_SHARE, 0, 0)},
             plant(stance, (narrow[stance], -feet[stance], 0.0), orient=(25, 0, 0)),  # heel up
             plant(swing, (narrow[swing], -feet[swing], 0.0), orient=(-15, 0, 0)))   # heel strike
         keys.append((frame - frames_per_step // 2, passing, None))
@@ -145,25 +154,39 @@ def _gait(steps: int, stride: float, frames_per_step: int, start: int, expressio
     return keys
 
 
-def _run_step(base, feet, stance, swing, target, sign, frame, frames_per_step):
+def _run_step(base, feet, stance, swing, target, sign, frame, frames_per_step, narrow):
     """One running step: passing (the swing heel tucks up under the body), flight (both feet
     off the ground, body high) and contact (lands under the body; the back foot is already
     lifting). Feet are tracked forward distances (metres, before this step's landing).
     The hips move forward at an even speed (passing, flight and contact a quarter stride
-    apart): an uneven spacing surges and stalls the body every step, a 5 g jolt to the bust."""
+    apart): an uneven spacing surges and stalls the body every step, a 5 g jolt to the bust.
+    As in the walk, the pelvis shifts over the supporting foot and drops on the free side
+    (passing: the stance foot; contact: the landing foot, a little less; flight: centred)
+    and turns with the leading leg, while the spine cancels both so the upper body stays
+    upright and the chest only counter-turns a little."""
     t = feet[stance]
     lead = (target - t) / 4               # the foot lands this far ahead of the hips
     arms = _arm_swing(base, sign, RUN_ARMS)
-    twist = {"hips": (0, 2, 6 * sign), "chest": (1, 0, -10 * sign)}    # as in _gait
-    passing = merge(base, {"hips_location": (0.0, -(t + lead), 0.0)},
-                    plant(stance, (0.0, -t, 0.0)),
-                    plant(swing, (0.0, -(t - 0.10), 0.24), orient=(40, 0, 0)))
-    flight = merge(base, arms, twist, {"hips_location": (0.0, -(t + target) / 2, 0.05)},
-                   plant(stance, (0.0, -t, 0.07), orient=(40, 0, 0)),          # toes push off
-                   plant(swing, (0.0, -(target - 0.05), 0.06), orient=(-10, 0, 0)))
-    contact = merge(base, arms, twist, {"hips_location": (0.0, -(target - lead), -0.05)},
-                    plant(swing, (0.0, -target, 0.0), orient=(-5, 0, 0)),
-                    plant(stance, (0.0, -t, 0.12), orient=(45, 0, 0)))         # back foot up
+    sx, sy, _ = base["spine"]
+
+    def pelvis(side: float, turn: float) -> dict:
+        """side: +1 = weight on her left foot (shift +X, drop the right hip), 0 = centred."""
+        roll = -RUN_DROP * side
+        return {"hips": (0, 2 + roll, turn), "spine": (sx, sy - roll, -turn),
+                "chest": (1, 0, -0.4 * turn), UPRIGHT: (UPRIGHT_SHARE, 0, 0)}
+
+    passing = merge(base, pelvis(sign, 3 * sign),
+                    {"hips_location": (RUN_SHIFT * sign, -(t + lead), 0.0)},
+                    plant(stance, (narrow[stance], -t, 0.0)),
+                    plant(swing, (narrow[swing] / 2, -(t - 0.10), 0.24), orient=(40, 0, 0)))
+    flight = merge(base, arms, pelvis(0.0, 6 * sign),
+                   {"hips_location": (0.0, -(t + target) / 2, 0.05)},
+                   plant(stance, (narrow[stance], -t, 0.07), orient=(40, 0, 0)),  # toes push off
+                   plant(swing, (narrow[swing], -(target - 0.05), 0.06), orient=(-10, 0, 0)))
+    contact = merge(base, arms, pelvis(-0.6 * sign, 6 * sign),
+                    {"hips_location": (-0.6 * RUN_SHIFT * sign, -(target - lead), -0.05)},
+                    plant(swing, (narrow[swing], -target, 0.0), orient=(-5, 0, 0)),
+                    plant(stance, (narrow[stance], -t, 0.12), orient=(45, 0, 0)))  # back foot up
     return [(frame - frames_per_step // 2, passing, None),
             (frame - frames_per_step // 4, flight, None, {"ground": False}),
             (frame, contact, None)]

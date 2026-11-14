@@ -19,7 +19,7 @@ Status as of 2026-11-10. 173 tests pass.
 
 **0. Setup.**
 - Git with binaries in Git LFS (`.gitattributes`), pushed to GitHub.
-- Blender 5.2.3 LTS, the VRM add-on and MCP for Blender 2.2.7 (pinned, with an update
+- Blender 5.2.3 LTS, the VRM add-on and MCP for Blender 2.2.9 (pinned, with an update
   script).
 - `uv` project with pytest and fake-bpy-module.
 - A headless job launcher.
@@ -122,6 +122,14 @@ Status as of 2026-11-10. 173 tests pass.
   Third pass (review: upper body followed the hip angles on Yidhari): the spine cancels
   the pelvis's tilt and turn, the chest only counter-turns ±3°; upper body within ~2° of
   upright while the hips turn ±8°. walk.mp4 approved by eye (2026-11-11).
+- Run pelvis (M1, 2026-11-12): shift 1.5 cm over the supporting foot and 4° drop
+  (passing: stance foot; contact: landing foot at 60 %; flight centred), turn ±6°, the
+  spine cancels both (upper body within ~1-3° of upright), feet 2 cm toward the midline.
+  Run tissue unchanged (bust step 36 → 37 mm).
+- Upright upper body (2026-11-12, review: Yidhari's torso still slid with the hips): the
+  `upright` pose entry leans the spine per rig so the neck follows 30 % of the pelvis's
+  sideways shift (`bl.pose._keep_upright`; a fixed lean fit one rig, not the other).
+  Neck side travel in the walk: Yidhari 9.5 → 3.3 cm, base 5.7 → 1.9 cm; pelvis 7-8 cm.
 - 13 motion presets: `walk`, `run`, `spin`, `jump_for_joy`, `hop`, `wave_hello`,
   `blow_kiss`, `heart`, `bow`, `sway`, `look_around`, plus seamless `walk_loop` / `run_loop`
   (pure data in `motions.py`, tested). The run has a flight phase and tucked heel, and its
@@ -275,7 +283,7 @@ per hour of work first.
      new original assets and generator features (hairstyles, outfits, physics presets).
 1. **Show and ship the lower body**: C1 (an outfit that shows it), T2 (motion in exported
    VRMs). Tuning (T1, T3) and body shape for hips and thighs are done and approved.
-2. **Make the motion carry the feel**: M1 (pelvis in the walk), M2 (heel pivot), M3 (idle
+2. **Make the motion carry the feel**: M2 (heel pivot), M3 (idle
    life), M4 (overshoot and overlap). Physics only answers the motion it's given.
 3. **Body types and shape**: B1, the rest of B2 (calf, bust projection, waist front/back),
    then B3. Hips, seat and thighs now have shape sliders.
@@ -306,7 +314,6 @@ balance table says how far each item should go. Size is S (hours), M (a session 
 
 | Id | Improvement | Why | Where | Size |
 |---|---|---|---|---|
-| M1 | Pelvis in the run: drop toward the swing leg, shift over the stance foot | Done for the walk (2026-11-11, see below); the run still only twists the hips | `motions._run_step` | S |
 | M2 | Heel-pivot contact | Known issue: the planted foot rotates about the ankle at heel strike, which reads as a toe slide | `motions._gait`, `anim._plant_pass` | M |
 | M3 | Idle life layered over any clip: breathing, blinks, small eye darts, slow weight shift | Between keys she's a statue. This is the cheapest big gain in feel. Build it as a pure generator of extra keys (seeded), applied after the preset | new pure module + `anim` | M |
 | M4 | Overshoot, settle and overlap in presets | Poses are reached by plain interpolation, all bones on the same frame. Add a helper that offsets chest, head and arms by 1 to 3 frames and inserts a small overshoot key | `motions`, `anim.sequence` | M |

@@ -1,5 +1,5 @@
-version=2.2.7
-wheel=mcp_for_blender-2.2.7-py3-none-any.whl
-wheel_sha256=2fd2ad6f9304f8217167c08dc61c18642bc08a9f43fb2c3988eee4851640472c
+version=2.2.9
+wheel=mcp_for_blender-2.2.9-py3-none-any.whl
+wheel_sha256=0378f59c22f9dbeb7f64808e0e6da3736ad07f2af4b5a2aa43a6d5480ea008eb
 addon_source=blender_mcp\bundled\addon.py
-addon_sha256=a7b3873aed8405bd2785292ab9b916a4392129f82a02a336b62ac14aa121828b
+addon_sha256=35e5f317b932d15b485a37d914f7c9d7b527c7ea527f526569c1c111e5f39a05

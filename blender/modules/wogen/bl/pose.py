@@ -17,8 +17,8 @@ import bpy
 from mathutils import Euler, Matrix, Quaternion, Vector
 
 from ..paths import ASSETS_DIR
-from ..poses import (HIPS_LOCATION, IK_CHAINS, IK_PREFIX, REST_PREFIX, Pose,  # noqa: F401
-                     PoseSpec, dump_pose, list_poses, resolve_pose)
+from ..poses import (HIPS_LOCATION, IK_CHAINS, IK_PREFIX, REST_PREFIX, UPRIGHT,  # noqa: F401
+                     Pose, PoseSpec, dump_pose, list_poses, resolve_pose)
 
 POSES_DIR = ASSETS_DIR / "poses"
 FOOT_BONES = ("left_foot", "right_foot", "left_toes", "right_toes")
@@ -80,7 +80,7 @@ def apply_pose(spec: PoseSpec = "a_pose", reset: bool = True, frame: int | None 
     pose = resolve_pose(spec, POSES_DIR)
     hmap = humanoid_map(arm)
     rotations = {k: v for k, v in pose.items()
-                 if k != HIPS_LOCATION and not k.startswith(IK_PREFIX)}
+                 if k not in (HIPS_LOCATION, UPRIGHT) and not k.startswith(IK_PREFIX)}
     iks = {k[len(IK_PREFIX):]: v for k, v in pose.items() if k.startswith(IK_PREFIX)}
     unknown = [n for n in rotations if n not in hmap]
     unknown += [v["target"] for v in iks.values()
@@ -105,6 +105,8 @@ def apply_pose(spec: PoseSpec = "a_pose", reset: bool = True, frame: int | None 
         pb = arm.pose.bones[hmap["hips"]]
         pb.location = _rest_rotation(pb.bone).inverted() @ Vector(hips_offset)
     bpy.context.view_layer.update()
+    if UPRIGHT in pose:
+        _keep_upright(arm, hmap, pose[UPRIGHT][0], (hips_offset or (0.0, 0.0, 0.0))[0])
     # Feet first (they follow the hips), then hands (which may target knees).
     hand_targets = {}
     for chain in sorted(iks, key=lambda c: (not c.endswith("_foot"), c)):
@@ -137,6 +139,24 @@ def apply_pose(spec: PoseSpec = "a_pose", reset: bool = True, frame: int | None 
         hips.keyframe_insert("location", frame=frame)
         arm.keyframe_insert("location", index=2, frame=frame)
     return pose
+
+
+def _keep_upright(arm, hmap: dict, fraction: float, shift: float) -> None:
+    """Lean the spine about the armature's front axis so the neck sits ``fraction`` of the
+    pelvis shift off the rest midline (the ``upright`` pose entry)."""
+    spine, neck = hmap.get("spine"), hmap.get("neck")
+    if spine is None or neck is None:
+        return
+    pb = arm.pose.bones[spine]
+    rest_x = arm.data.bones[neck].head_local.x
+    for _ in range(2):                         # the second pass absorbs the small-angle error
+        head, top = pb.head.copy(), arm.pose.bones[neck].head
+        error = top.x - (rest_x + fraction * shift)
+        angle = -math.atan2(error, max(top.z - head.z, 1e-3))  # about +Y, + tips toward +X
+        turn = (Matrix.Translation(head) @ Matrix.Rotation(angle, 4, "Y")
+                @ Matrix.Translation(-head))
+        pb.matrix = turn @ pb.matrix
+        bpy.context.view_layer.update()
 
 
 def _parent_delta(pb: bpy.types.PoseBone) -> Quaternion:

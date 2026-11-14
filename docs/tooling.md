@@ -9,7 +9,7 @@ Installs need explicit approval (global rule 1). Everything below marked ✅ is 
 | **Blender** | ✅ 5.2.3 LTS, `C:\Program Files\Blender Foundation\Blender 5.2\blender.exe` | Everything | Not on PATH. The CLI finds it at that path, or set `WOGEN_BLENDER`. Bundled Python 3.13. |
 | **VRM Add-on for Blender** | ✅ Blender Extensions (`bl_ext.blender_org.vrm`) | VRM import/export, MToon, spring-bone data, humanoid map | Headless jobs enable it themselves under `--factory-startup`. |
 | **Python + uv** | ✅ Python 3.14, uv | CLI, tests | `requires-python >=3.13`. `.venv` via `uv sync`. Dev group: `pytest`, `fake-bpy-module`. |
-| **MCP for Blender** | ✅ 2.2.7, pinned | Claude ↔ live Blender | See below. |
+| **MCP for Blender** | ✅ 2.2.9, pinned | Claude ↔ live Blender | See below. |
 | **MMD Tools** | ✅ Blender Extensions (`bl_ext.blender_org.mmd_tools`), installed 2026-11-10 | Import PMX/PMD reference models (`imports/`) | Interactive Blender only; headless jobs don't enable it. Imported scenes are saved as `.blend` next to the source so scripts can load them without it. |
 | **VroidStudio** | ✅ (winget) | Base body, garments, hairstyles | Source project in `vroid/model.vroid`. |
 | **Git + Git LFS** | ✅ installed; repo on GitHub | Version control | `.gitattributes` puts `*.vrm *.vroid *.blend *.fbx *.png *.jpg *.mp4 *.bvh` in LFS. Set up LFS once per machine before cloning. |
@@ -67,7 +67,7 @@ halves.
 
 | Half | Location | Pinned by |
 |---|---|---|
-| MCP server | `.mcp.json`: `uvx mcp-for-blender@2.2.7`, telemetry opt-outs set | Version in `args` |
+| MCP server | `.mcp.json`: `uvx mcp-for-blender@2.2.9`, telemetry opt-outs set | Version in `args` |
 | Blender add-on | `blender/addons/blender_mcp.py`, extracted from the same wheel | `blender/addons/blender_mcp.VERSION` (version + SHA-256s) |
 
 - **Update:** run `.\scripts\update-blender-mcp.ps1`. It pins the newest release and does

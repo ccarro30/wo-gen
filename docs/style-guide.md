@@ -203,7 +203,7 @@ Scaling with size: slim settings land at roughly 60 % of these, curvy at 150 to 
 | Skirt swing, limbs push cloth | ✅ Spring chains with limb colliders; no cloth sim between bones | `physics` |
 | Wind / idle drift on hair and cloth | ✅ Slow seeded drift on all chains; approved by eye | `drift`, `physics` |
 | Anticipation, overshoot, overlap in presets | 🟡 Hop and jump dip first; no overshoot or per-part offsets | `motions` |
-| Pelvis drop and weight shift in the walk | 🟡 Walk: shift, drop, counter-twist, real arm swing (awaiting review); run: twist only | `motions._gait` |
+| Pelvis drop and weight shift in the walk | 🟡 Walk approved by eye on the base (upright upper body awaiting review on imports); run: shift, drop, upright upper body (awaiting review) | `motions._gait`, `_run_step` |
 | Idle life (breathing, blinks, eye darts) | ⬜ Clips hold a static pose between keys | `motions`, `anim` |
 | Ground contact shadow | ⬜ Lights cast no shadows, so feet don't visibly touch the floor | `render.setup_lights` |
 | Bloom, grade, chromatic aberration, vignette | ✅ | `post` |
